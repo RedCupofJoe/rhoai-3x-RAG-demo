@@ -246,7 +246,8 @@ create_bootstrap_app() {
     log "Bootstrap Application ${BOOTSTRAP_APP_NAME} already exists; updating repoURL."
     local escaped_url
     escaped_url=$(json_escape "${normalized}")
-    oc patch applications.argoproj.io "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" --type=merge -p "{\"spec\":{\"source\":{\"repoURL\":\"${escaped_url}\",\"path\":\"argocd\",\"targetRevision\":\"main\"}}}"
+    # Include directory.recurse so the patch does not remove it (merge replaces spec.source)
+    oc patch applications.argoproj.io "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" --type=merge -p "{\"spec\":{\"source\":{\"repoURL\":\"${escaped_url}\",\"path\":\"argocd\",\"targetRevision\":\"main\",\"directory\":{\"recurse\":true}}}}"
     return 0
   fi
   log "Creating bootstrap Application ${BOOTSTRAP_APP_NAME} in ${NAMESPACE_GITOPS}."
@@ -477,6 +478,7 @@ main() {
   create_console_links
 
   log "Done."
+  log "If deployment seems to stall: oc get applications.argoproj.io -n openshift-gitops; ensure repo is pushed and bootstrap app is Synced/Healthy; check child app sync status in Argo CD UI."
   if [[ "${REPO_PUSHED:-0}" -eq 1 ]]; then
     log "ArgoCD will sync from the repo; no need to push."
   elif [[ -z "${SKIP_REPO_UPDATE:-}" ]]; then

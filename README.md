@@ -140,6 +140,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 
 **Troubleshooting**
 
+- **Application deployment stalling:** (1) Push your repo so Argo CD can sync: `git push` (or run bootstrap with `GIT_PUSH=1`). (2) Check apps: `oc get applications.argoproj.io -n openshift-gitops` — bootstrap app `rag-demo-app-of-apps` should be Synced/Healthy; child apps (rag-demo-operators, -infrastructure, -models, -pipelines, -apps) may show Progressing while operators install or resources deploy. (3) Ensure the bootstrap app has `directory.recurse: true` (re-run the bootstrap script; it now preserves this when patching). (4) In Argo CD UI, open each application to see sync errors or waiting resources (e.g. PVC Pending, ImagePullBackOff).
 - **Bootstrap Application not syncing:** Ensure `argocd/app-of-apps.yaml` is pushed and the repo URL in the bootstrap Application matches your push target.
 - **OAuth or ConsoleLinks:** Re-run the script without skip flags after the `rag-demo` namespace and routes exist.
 - **Model storage:** Set the `MODEL_STORAGE_URI_*` environment variables and re-run the script with the skip flags above so only storage is patched.
