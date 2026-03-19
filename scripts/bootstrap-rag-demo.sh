@@ -13,6 +13,7 @@
 #   SKIP_GITOPS_INSTALL   If set, do not check or install OpenShift GitOps operator
 #   SKIP_OAUTH_SECRETS    If set, do not create OAuth session secrets
 #   SKIP_MODEL_STORAGE    If set, do not patch InferenceService storage
+#   GIT_PUSH             If set, commit and push argocd/app-of-apps.yaml when repoURL was updated (requires git, push may prompt for auth)
 #   CREATE_PIPELINE_RUN   If set, create a PipelineRun using PVC rag-docs
 #   SKIP_CONSOLE_LINKS   If set, do not add ConsoleLinks (frontends in console dropdown)
 #   MODEL_STORAGE_URI_GPT_OSS_20B    e.g. s3://bucket/gpt-OSS-20B
@@ -205,6 +206,33 @@ set_repo_url() {
     else
       log "No placeholder repoURL found in ${APPS_FILE}; leaving as-is. Set GIT_REPO_URL if you need to change it."
     fi
+  fi
+}
+
+# --- Optional: commit and push app-of-apps.yaml so ArgoCD can sync ---
+# Sets REPO_PUSHED=1 if a push was done (caller can use for messaging).
+maybe_push_repo() {
+  REPO_PUSHED=0
+  [[ -n "${GIT_PUSH:-}" ]] || return 0
+  if ! git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree &>/dev/null; then
+    log "GIT_PUSH is set but ${REPO_ROOT} is not a git repo; skipping push."
+    return 0
+  fi
+  if git -C "${REPO_ROOT}" status --porcelain -- "${APPS_FILE}" | grep -q .; then
+    log "Committing and pushing ${APPS_FILE} (GIT_PUSH is set)."
+    if git -C "${REPO_ROOT}" add "${APPS_FILE}" && \
+       git -C "${REPO_ROOT}" commit -m "chore: set repoURL for ArgoCD app-of-apps"; then
+      if git -C "${REPO_ROOT}" push; then
+        REPO_PUSHED=1
+        log "Pushed ${APPS_FILE}; ArgoCD will sync from the repo."
+      else
+        err "git push failed (check remote and auth). Push manually: git push"
+      fi
+    else
+      err "git commit failed or nothing to commit."
+    fi
+  else
+    log "No local changes to ${APPS_FILE}; skipping push."
   fi
 }
 
@@ -434,15 +462,25 @@ main() {
   repo_url=$(get_repo_url)
   log "Using Git repo: ${repo_url}"
 
+  REPO_PUSHED=0
   set_repo_url "${repo_url}"
+  maybe_push_repo
   create_bootstrap_app "${repo_url}"
   create_oauth_secrets
   patch_model_storage
   create_pipeline_run
   create_console_links
 
-  log "Done. If you just created the bootstrap Application, push your repo (with updated app-of-apps.yaml) and ArgoCD will sync the rest."
-  log "To patch model storage after sync, set MODEL_STORAGE_URI_GPT_OSS_20B, MODEL_STORAGE_URI_GRANITE_7B, MODEL_STORAGE_URI_GEMMA_2_9B and re-run with SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1"
+  log "Done."
+  if [[ "${REPO_PUSHED:-0}" -eq 1 ]]; then
+    log "ArgoCD will sync from the repo; no need to push."
+  elif [[ -z "${SKIP_REPO_UPDATE:-}" ]]; then
+    log "If repoURL was updated, push your repo so ArgoCD can sync: git add argocd/app-of-apps.yaml && git commit -m 'Set repoURL for ArgoCD' && git push"
+    log "Or re-run with GIT_PUSH=1 to automate the push."
+  fi
+  if [[ -z "${MODEL_STORAGE_URI_GPT_OSS_20B:-}${MODEL_STORAGE_URI_GRANITE_7B:-}${MODEL_STORAGE_URI_GEMMA_2_9B:-}" ]]; then
+    log "To patch model storage later: set MODEL_STORAGE_URI_GPT_OSS_20B, MODEL_STORAGE_URI_GRANITE_7B, MODEL_STORAGE_URI_GEMMA_2_9B and re-run with SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1"
+  fi
 }
 
 main "$@"

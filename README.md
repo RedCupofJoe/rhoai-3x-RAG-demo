@@ -4,11 +4,11 @@ GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (
 
 ## Environment
 
-- **Platform:** OpenShift 4.19+, RHOAI 3.0
+- **Platform:** OpenShift 4.19 / 4.20+, RHOAI 3.0
 - **Hardware:** 2× NVIDIA H100 GPUs, 1TB RAM
 - **Vector DB:** Standalone Milvus; **in-cluster MinIO** (S3-compatible) installed by Argo during the infrastructure sync wave.
 - **PersistentVolumes:** Storage-agnostic (cluster default). Optional overlays for a specific storage class (e.g. **OpenShift IBM Storage Operator** for fibre channel); see [Optional: Storage class](#optional-storage-class).
-- **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog)
+- **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog). This repo deploys them and wires each to an Open WebUI frontend and configures Milvus for RAG; see [OpenShift AI Model Catalog vs this repo](#openshift-ai-model-catalog-vs-this-repo).
 
 ## Install from terminal
 
@@ -17,8 +17,8 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 **Prerequisites**
 
 - OpenShift CLI (`oc`) installed and in your `PATH`
-- Logged into the target cluster (`oc login`)
-- OpenShift GitOps (ArgoCD) installed (e.g. in `openshift-gitops`)
+- Logged into the target cluster as **cluster-admin** (or equivalent) so the bootstrap script and ArgoCD can create namespaces, operators, and resources
+- OpenShift GitOps (ArgoCD) installed (e.g. in `openshift-gitops`); the bootstrap script can install it if missing
 - (Optional) For **external S3** instead of in-cluster MinIO: S3 bucket and credentials; see [infrastructure/milvus/README.md](infrastructure/milvus/README.md).  
   (Optional) A specific **storage class** for PVCs—e.g. from the OpenShift IBM Storage Operator for fibre channel—see [Optional: Storage class](#optional-storage-class) below.
 
@@ -68,9 +68,11 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 
 5. **Push the updated manifest** (if the script changed `argocd/app-of-apps.yaml`)
 
-   ArgoCD syncs from the repo; after the script runs, the file contains your repo URL. Commit and push so ArgoCD sees it:
+   ArgoCD syncs from the repo; after the script runs, the file contains your repo URL. Either run with **`GIT_PUSH=1`** to have the script commit and push for you, or push manually:
 
    ```bash
+   GIT_PUSH=1 ./scripts/bootstrap-rag-demo.sh
+   # or manually:
    git add argocd/app-of-apps.yaml
    git commit -m "Set repoURL for ArgoCD"
    git push
@@ -295,6 +297,30 @@ If **Nvidia GPU**, **OpenShift Pipelines**, **OpenShift GitOps**, or **OpenShift
   - OpenShift Pipelines (`openshift-operators`)
 
 Uncomment or add a GitOps Subscription in `operators/` if you manage OpenShift GitOps via GitOps.
+
+## OpenShift AI Model Catalog vs this repo
+
+**What OpenShift AI automates:** The [OpenShift AI Model Catalog](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/2.25/html-single/working_with_the_model_catalog/) lets you **deploy a model** from the validated catalog (UI or API). That creates an **InferenceService** in a project you choose. The catalog does **not** create frontends, wire them to models, or configure a vector DB.
+
+**What this repo automates (GitOps):** This repo deploys the **full RAG stack** in one flow: models (InferenceServices that use the same catalog-backed storage), **three Open WebUI frontends** each wired to one model, **Milvus** (and MinIO) for the vector store, and a **Tekton pipeline** to ingest documents into Milvus. So you get catalog-backed models **and** the connections to frontends and Milvus from a single sync.
+
+**Using catalog models here:** The InferenceServices in `models/` reference RHOAI Model Catalog storage (or S3). After sync, the bootstrap script can patch `spec.predictor.model.storage` with your catalog or S3 URIs (`MODEL_STORAGE_URI_*`). So models are still “from the catalog”; this repo adds the rest of the automation (frontends, Milvus, pipeline).
+
+**Alternative:** Red Hat’s [RAG AI quickstart](https://docs.redhat.com/en/learn/ai-quickstarts/rh-RAG) uses a different stack (Llama Stack, PGVector, Kubeflow Pipelines, Helm). Use it if you prefer that blueprint; this repo is a GitOps alternative with three separate chat frontends and Milvus.
+
+**Using OpenShift 4.20 to configure frontends and Milvus:** OpenShift 4.20 doesn’t provide a separate UI or controller that wires frontends to models or installs Milvus. On 4.19/4.20, you use this repo: deploy via ArgoCD (and the bootstrap script). ArgoCD syncs the manifests that define the three Open WebUI deployments (each with `OLLAMA_BASE_URL` pointing at its InferenceService), Milvus, MinIO, and the Tekton ingestion pipeline. So “configure frontends and setup Milvus” on 4.20 = run the bootstrap script and let ArgoCD sync this repo.
+
+### Who deploys what (full automation)
+
+| Step | Who | What |
+|------|-----|------|
+| 1 | **You** (cluster admin) | Log in (`oc login`), run the bootstrap script (and push, or `GIT_PUSH=1`). The script can install OpenShift GitOps if missing. |
+| 2 | **GitOps (ArgoCD)** | Syncs this repo and deploys **everything**: infrastructure (Milvus, MinIO, etc.), **model definitions (InferenceService CRs)**, pipelines, and the three frontends. So GitOps configures the frontends, sets up Milvus, and creates the InferenceService resources. |
+| 3 | **OpenShift AI (RHOAI)** | Supplies the Model Catalog (model artifacts) and the serving stack that **reconciles** InferenceService CRs and runs the actual model pods. Those pods pull from the catalog (or S3). So the models that connect to Milvus at inference time are run by OpenShift AI; the CRs that tell it what to deploy come from GitOps. |
+
+So the **whole deployment is automated** as long as you are logged into the OpenShift cluster with a cluster-admin account, run the bootstrap script, and push the updated manifest (or use `GIT_PUSH=1`). You do not need to deploy models separately from the OpenShift AI catalog UI; GitOps deploys the InferenceService CRs from this repo, and OpenShift AI runs them.
+
+**Will GitOps configure the S3 infrastructure for Milvus?** Yes. The infrastructure wave includes **in-cluster MinIO** (S3-compatible): MinIO Deployment, Service, PVC, ConfigMap (`milvus-s3-config`), Secret (`milvus-s3-credentials` with default credentials), and a PostSync Job that creates the `milvus-rag` bucket. So GitOps configures the object storage Milvus needs with no extra steps. For **external AWS S3** instead of MinIO, you create the bucket and credentials and patch the ConfigMap/Secret (or use an overlay); see [infrastructure/milvus/README.md](infrastructure/milvus/README.md).
 
 ## Model Serving & GPU Slicing (Wave 3)
 
