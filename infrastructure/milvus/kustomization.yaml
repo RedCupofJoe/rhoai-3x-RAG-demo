@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: rag-demo
 resources:
   - pvc-milvus.yaml
+  - milvus-s3-config.yaml
   - deployment-milvus.yaml
   - service-milvus.yaml
 commonLabels:

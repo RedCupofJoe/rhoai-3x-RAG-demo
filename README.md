@@ -1,12 +1,13 @@
 # Triple-Chatbot RAG Demo — GitOps (RHOAI 3.0, ArgoCD, SNO)
 
-GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (SNO)** with **RHOAI 3.0**, **ArgoCD**, and **inline Milvus**.
+GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (SNO)** with **RHOAI 3.0**, **ArgoCD**, and **standalone Milvus** vector DB.
 
 ## Environment
 
 - **Platform:** OpenShift 4.19+, RHOAI 3.0
 - **Hardware:** 2× NVIDIA H100 GPUs, 1TB RAM
-- **Storage/DB:** Inline Milvus (RHOAI-integrated or standalone)
+- **Vector DB:** Standalone Milvus with **S3** (or S3-compatible) object storage; **no MinIO** in-cluster.
+- **PersistentVolumes:** Storage-agnostic (cluster default). Optional overlays for a specific storage class (e.g. **OpenShift IBM Storage Operator** for fibre channel); see [Optional: Storage class](#optional-storage-class).
 - **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog)
 
 ## Install from terminal
@@ -18,6 +19,8 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 - OpenShift CLI (`oc`) installed and in your `PATH`
 - Logged into the target cluster (`oc login`)
 - OpenShift GitOps (ArgoCD) installed (e.g. in `openshift-gitops`)
+- **S3 (or S3-compatible) bucket** and credentials for Milvus object storage  
+  (Optional: a specific **storage class** for PVCs—e.g. from the OpenShift IBM Storage Operator for fibre channel—see [Optional: Storage class](#optional-storage-class) below.)
 
 **Steps**
 
@@ -36,7 +39,19 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    oc login <your-cluster-api-url>
    ```
 
-3. **Run the bootstrap script**
+3. **Create the Milvus S3 credentials secret** (required for vector DB; do not commit real keys):
+
+   ```bash
+   oc create namespace rag-demo --dry-run=client -o yaml | oc apply -f -
+   oc create secret generic milvus-s3-credentials -n rag-demo \
+     --from-literal=accesskeyid="YOUR_S3_ACCESS_KEY" \
+     --from-literal=secretaccesskey="YOUR_S3_SECRET_KEY"
+   ```
+
+   Edit `infrastructure/milvus/milvus-s3-config.yaml` (or patch the ConfigMap after deploy) to set your S3 endpoint and bucket. See [infrastructure/milvus/README.md](infrastructure/milvus/README.md).  
+   **Storage (optional):** If you want a specific storage class for PVCs (e.g. IBM Storage Operator for fibre channel), see [Optional: Storage class](#optional-storage-class) before or during deploy.
+
+4. **Run the bootstrap script**
 
    The script updates the repo URL in the App-of-Apps manifest, creates the bootstrap ArgoCD Application, OAuth session secrets for the three UIs, and (optionally) ConsoleLinks and model storage patches.
 
@@ -52,7 +67,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    ./scripts/bootstrap-rag-demo.sh
    ```
 
-4. **Push the updated manifest** (if the script changed `argocd/app-of-apps.yaml`)
+5. **Push the updated manifest** (if the script changed `argocd/app-of-apps.yaml`)
 
    ArgoCD syncs from the repo; after the script runs, the file contains your repo URL. Commit and push so ArgoCD sees it:
 
@@ -62,7 +77,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    git push
    ```
 
-5. **Wait for ArgoCD to sync**
+6. **Wait for ArgoCD to sync**
 
    In the OpenShift console, open the GitOps application and confirm the five child applications (operators → infrastructure → models → pipelines → apps) sync in order. Or from the terminal:
 
@@ -70,7 +85,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    oc get applications -n openshift-gitops
    ```
 
-6. **Optional: set model storage URIs and re-run**
+7. **Optional: set model storage URIs and re-run**
 
    After the `rag-demo` namespace and InferenceServices exist, you can patch storage (e.g. S3 or RHOAI Model Catalog URIs) and optionally add ConsoleLinks:
 
@@ -81,7 +96,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1 ./scripts/bootstrap-rag-demo.sh
    ```
 
-7. **Optional: run the RAG pipeline** (after pipelines and PVC are synced)
+8. **Optional: run the RAG pipeline** (after pipelines and PVC are synced)
 
    To ingest PDFs from the `rag-docs` PVC into Milvus:
 
@@ -121,6 +136,16 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 - **OAuth or ConsoleLinks:** Re-run the script without skip flags after the `rag-demo` namespace and routes exist.
 - **Model storage:** Set the `MODEL_STORAGE_URI_*` environment variables and re-run the script with the skip flags above so only storage is patched.
 
+### Optional: Storage class
+
+The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a storage class by default, so the cluster default is used. During deployment you can optionally use a specific storage class (e.g. for fibre channel or other backends).
+
+- **Cluster default:** Do nothing; use the standard install and the default StorageClass applies.
+- **IBM block storage (OpenShift IBM Storage Operator):** The **OpenShift IBM Storage Operator** is often used to create StorageClasses for fibre channel and other IBM storage. If your cluster has a StorageClass created by it (e.g. `ibm-block`), you can deploy with the optional overlay so Milvus PVCs use it:
+  - Point the ArgoCD **infrastructure** Application source path to **`infrastructure/milvus/overlays/ibm-block`** instead of `infrastructure` (see [infrastructure/milvus/README.md](infrastructure/milvus/README.md)), or
+  - Apply the overlay once: `kustomize build infrastructure/milvus/overlays/ibm-block | oc apply -f -`
+- **Other storage:** Copy `infrastructure/milvus/overlays/ibm-block` to a new overlay (e.g. `overlays/my-storage`) and set `storageClassName` in the patch files to your StorageClass name.
+
 ## Repository Layout
 
 ```
@@ -134,11 +159,15 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 │   ├── namespace-*.yaml
 │   ├── operator-group-*.yaml
 │   └── subscription-*.yaml    # RHOAI, NVIDIA GPU, OpenShift Pipelines (GitOps optional)
-├── infrastructure/            # Wave 2 — Milvus/DB
+├── infrastructure/            # Wave 2 — Milvus/DB (standalone + S3, PVs on IBM storage)
 │   ├── kustomization.yaml
 │   ├── namespace.yaml
 │   └── milvus/
-│       ├── pvc-milvus.yaml
+│       ├── README.md          # S3 config, optional storage class
+│       ├── pvc-milvus.yaml    # Storage-agnostic (no storageClassName)
+│       ├── milvus-s3-config.yaml
+│       ├── overlays/
+│       │   └── ibm-block/     # Optional: IBM Storage Operator / fibre channel
 │       ├── deployment-milvus.yaml
 │       └── service-milvus.yaml
 ├── models/                    # Wave 3 — Model serving (GPU slicing)
@@ -169,7 +198,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 | Wave | Directory      | Content                                      |
 |------|----------------|----------------------------------------------|
 | 1    | `operators`   | Nvidia GPU, OpenShift Pipelines, RHOAI, (GitOps) |
-| 2    | `infrastructure` | Namespace, Milvus PVC/Deployment/Service   |
+| 2    | `infrastructure` | Namespace, Milvus (standalone + S3), etcd; PVCs storage-agnostic (optional overlay) |
 | 3    | `models`      | ServingRuntime, InferenceServices (3 models)  |
 | 4    | `pipelines`   | Tekton Pipeline + Tasks, PVC, ConfigMaps      |
 | 5    | `apps`        | 3× Open WebUI + OAuth proxy                   |
@@ -278,7 +307,7 @@ Model storage paths reference RHOAI Model Catalog; set `spec.predictor.model.sto
 
 - **Tekton Pipeline** `rag-docling-milvus`:
   1. **Task 1 — Docling:** Reads from `rag-doc/` (PVC `rag-docs`), parses PDFs, applies **remove_headers**, **remove_footers**, **remove_toc** (see [scripts/docling_parse.py](pipelines/scripts/docling_parse.py)), writes markdown to a workspace.
-  2. **Task 2 — Chunk & upsert:** Chunks markdown and upserts vectors into the inline Milvus instance.
+  2. **Task 2 — Chunk & upsert:** Chunks markdown and upserts vectors into the standalone Milvus instance (S3 object storage).
 
 - **Docling script:** [pipelines/scripts/docling_parse.py](pipelines/scripts/docling_parse.py) — Python logic for header/footer/TOC removal (post-process on exported markdown).
 - **rag-doc/** is in [.gitignore](.gitignore); do not commit raw PDFs.
@@ -339,5 +368,7 @@ kubectl kustomize apps
 `rag-doc/` and `*.pdf` are ignored so raw documents are not committed.
 
 ---
+
+**Vector DB and storage:** Standalone Milvus uses **S3** (or S3-compatible) for object storage; create the `milvus-s3-credentials` secret and set the S3 endpoint/bucket in `milvus-s3-config` ConfigMap. **PersistentVolumes** for etcd and Milvus local data are storage-agnostic (cluster default); optionally use [infrastructure/milvus/overlays/ibm-block](infrastructure/milvus/overlays/ibm-block) for IBM Storage Operator / fibre channel, or add your own overlay. See [infrastructure/milvus/README.md](infrastructure/milvus/README.md).
 
 **Summary:** App-of-Apps in `argocd/` drives five child Applications (operators → infrastructure → models → pipelines → apps). Operators and health checks are conditional/documentary; model storage and GPU limits should be tuned for your 2× H100 SNO and RHOAI Model Catalog.

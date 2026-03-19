@@ -30,16 +30,3 @@ spec:
       name: client
   selector:
     app: milvus-etcd
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: milvus-minio
-  namespace: rag-demo
-spec:
-  ports:
-    - port: 9000
-      targetPort: 9000
-      name: api
-  selector:
-    app: milvus-minio

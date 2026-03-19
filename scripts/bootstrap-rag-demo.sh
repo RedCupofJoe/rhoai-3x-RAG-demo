@@ -17,6 +17,8 @@
 #   MODEL_STORAGE_URI_GPT_OSS_20B    e.g. s3://bucket/gpt-OSS-20B
 #   MODEL_STORAGE_URI_GRANITE_7B     e.g. s3://bucket/granite-7b
 #   MODEL_STORAGE_URI_GEMMA_2_9B    e.g. s3://bucket/gemma-2-9b-it
+#   STORAGE_CLASS                   Optional: name of StorageClass for PVCs (e.g. ibm-block);
+#                                   if set, use infrastructure/milvus/overlays/ibm-block or see README.
 #
 set -euo pipefail
 
@@ -302,6 +304,9 @@ get_repo_url() {
 # --- main ---
 main() {
   log "Bootstrap RAG demo (cluster: $(oc whoami --show-server 2>/dev/null || echo 'not logged in'))."
+  if [[ -n "${STORAGE_CLASS:-}" ]]; then
+    log "STORAGE_CLASS=${STORAGE_CLASS} set: for PVCs to use it, deploy with overlay infrastructure/milvus/overlays/ibm-block or a custom overlay (see README 'Optional: Storage class')."
+  fi
   check_oc
   local repo_url
   repo_url=$(get_repo_url)

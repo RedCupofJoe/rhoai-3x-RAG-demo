@@ -1,0 +1,26 @@
+# Optional overlay: use IBM block storage (e.g. from OpenShift IBM Storage Operator / fibre channel).
+# Use when your cluster has a StorageClass created by the IBM Storage Operator and you want
+# Milvus PVCs to use it.
+#
+# To use with ArgoCD: set the infrastructure Application source path to:
+#   path: infrastructure/milvus/overlays/ibm-block
+# (and remove or don't sync the default infrastructure app for this namespace, or use once then switch back.)
+# Or build and apply manually: kustomize build infrastructure/milvus/overlays/ibm-block | oc apply -f -
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rag-demo
+resources:
+  - ../../../namespace.yaml
+  - ../../pvc-milvus.yaml
+  - ../../milvus-s3-config.yaml
+  - ../../deployment-milvus.yaml
+  - ../../service-milvus.yaml
+patches:
+  - path: pvc-etcd-patch.yaml
+    target:
+      kind: PersistentVolumeClaim
+      name: milvus-etcd-data
+  - path: pvc-milvus-data-patch.yaml
+    target:
+      kind: PersistentVolumeClaim
+      name: milvus-data

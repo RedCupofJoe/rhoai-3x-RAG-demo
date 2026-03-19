@@ -1,4 +1,6 @@
-# Inline Milvus standalone for RAG vector store (RHOAI-integrated use: replace with ModelMesh/Milvus from DSC if available)
+# Standalone Milvus for RAG vector store.
+# Object storage: S3 (or S3-compatible). Metadata: etcd. Local data: PVC on IBM storage (fibre channel).
+# No MinIO deployment; configure S3 via milvus-s3-config ConfigMap and milvus-s3-credentials Secret.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,7 +29,30 @@ spec:
             - name: ETCD_ENDPOINTS
               value: "milvus-etcd.rag-demo.svc:2379"
             - name: MINIO_ADDRESS
-              value: "milvus-minio.rag-demo.svc:9000"
+              valueFrom:
+                configMapKeyRef:
+                  name: milvus-s3-config
+                  key: S3_ENDPOINT
+            - name: MINIO_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: milvus-s3-config
+                  key: S3_PORT
+            - name: MINIO_USE_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: milvus-s3-config
+                  key: S3_USE_SSL
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-s3-credentials
+                  key: accesskeyid
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-s3-credentials
+                  key: secretaccesskey
           volumeMounts:
             - name: milvus-data
               mountPath: /var/lib/milvus
@@ -43,7 +68,7 @@ spec:
           persistentVolumeClaim:
             claimName: milvus-data
 ---
-# Minimal etcd for Milvus (standalone mode can use embedded; this is optional for production)
+# etcd for Milvus metadata (data on IBM storage via PVC).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -84,44 +109,3 @@ spec:
         - name: etcd-data
           persistentVolumeClaim:
             claimName: milvus-etcd-data
----
-# MinIO for Milvus object storage (required; Milvus connects via service DNS)
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: milvus-minio
-  namespace: rag-demo
-  annotations:
-    argocd.argoproj.io/sync-wave: "2"
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: milvus-minio
-  template:
-    metadata:
-      labels:
-        app: milvus-minio
-    spec:
-      containers:
-        - name: minio
-          image: quay.io/minio/minio:latest
-          args:
-            - server
-            - /data
-          ports:
-            - containerPort: 9000
-          volumeMounts:
-            - name: minio-data
-              mountPath: /data
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
-      volumes:
-        - name: minio-data
-          persistentVolumeClaim:
-            claimName: milvus-minio-data

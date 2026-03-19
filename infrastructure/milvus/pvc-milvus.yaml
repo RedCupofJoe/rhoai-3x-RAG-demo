@@ -1,3 +1,7 @@
+# PersistentVolumes for standalone Milvus (etcd + local data).
+# Storage-agnostic: no storageClassName; cluster default is used.
+# Optional: use an overlay to set a storage class (e.g. overlays/ibm-block for IBM Storage Operator).
+# Object storage is S3 (no local MinIO PVC).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -11,21 +15,6 @@ spec:
   resources:
     requests:
       storage: 50Gi
-  # storageClassName: standard  # set per cluster
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: milvus-minio-data
-  namespace: rag-demo
-  annotations:
-    argocd.argoproj.io/sync-wave: "2"
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 100Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -40,4 +29,3 @@ spec:
   resources:
     requests:
       storage: 20Gi
-  # storageClassName: standard  # set per cluster
