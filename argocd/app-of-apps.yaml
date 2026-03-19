@@ -11,7 +11,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/rhoai-3x-RAG-demo.git
+    repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git  # bootstrap script replaces with git remote or GIT_REPO_URL
     path: operators
     targetRevision: main
     directory:
@@ -36,7 +36,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/rhoai-3x-RAG-demo.git
+    repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git  # bootstrap script replaces with git remote or GIT_REPO_URL
     path: infrastructure
     targetRevision: main
     directory:
@@ -61,7 +61,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/rhoai-3x-RAG-demo.git
+    repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git  # bootstrap script replaces with git remote or GIT_REPO_URL
     path: models
     targetRevision: main
     directory:
@@ -84,7 +84,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/rhoai-3x-RAG-demo.git
+    repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git  # bootstrap script replaces with git remote or GIT_REPO_URL
     path: pipelines
     targetRevision: main
     directory:
@@ -107,7 +107,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/rhoai-3x-RAG-demo.git
+    repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git  # bootstrap script replaces with git remote or GIT_REPO_URL
     path: apps
     targetRevision: main
     directory:

@@ -59,10 +59,10 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    ./scripts/bootstrap-rag-demo.sh
    ```
 
-   The script uses your `git remote origin` URL as the ArgoCD repo. To override:
+   The repo URL is set automatically from your **git remote origin** (so it stays correct if you fork and push to your own org). To override:
 
    ```bash
-   export GIT_REPO_URL="https://github.com/myorg/rhoai-3x-RAG-demo.git"
+   export GIT_REPO_URL="https://github.com/YOUR_ORG/rhoai-3x-RAG-demo.git"
    ./scripts/bootstrap-rag-demo.sh
    ```
 
@@ -140,7 +140,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 
 **Troubleshooting**
 
-- **Application deployment stalling:** (1) Push your repo so Argo CD can sync: `git push` (or run bootstrap with `GIT_PUSH=1`). (2) Check apps: `oc get applications.argoproj.io -n openshift-gitops` — bootstrap app `rag-demo-app-of-apps` should be Synced/Healthy; child apps (rag-demo-operators, -infrastructure, -models, -pipelines, -apps) may show Progressing while operators install or resources deploy. (3) Ensure the bootstrap app has `directory.recurse: true` (re-run the bootstrap script; it now preserves this when patching). (4) In Argo CD UI, open each application to see sync errors or waiting resources (e.g. PVC Pending, ImagePullBackOff).
+- **Application deployment stalling:** (1) **Repo URL must match where you push:** If you see only `rag-demo-app-of-apps` with Sync Status `Unknown`, the bootstrap app is likely pointing at the wrong repo (e.g. `myorg` vs your fork `RedCupofJoe`). Fix: `oc patch applications.argoproj.io rag-demo-app-of-apps -n openshift-gitops --type=merge -p '{"spec":{"source":{"repoURL":"https://github.com/YOUR_ORG/rhoai-3x-RAG-demo.git","path":"argocd","targetRevision":"main","directory":{"recurse":true}}}}'` (replace `YOUR_ORG` with your GitHub org/user). Then push your repo and wait for Argo to sync. (2) Check apps: `oc get applications.argoproj.io -n openshift-gitops` — after a good sync you should see the bootstrap app plus child apps (rag-demo-operators, -infrastructure, -models, -pipelines, -apps). (3) In Argo CD UI, open each application to see sync errors or waiting resources (e.g. PVC Pending, ImagePullBackOff).
 - **Bootstrap Application not syncing:** Ensure `argocd/app-of-apps.yaml` is pushed and the repo URL in the bootstrap Application matches your push target.
 - **OAuth or ConsoleLinks:** Re-run the script without skip flags after the `rag-demo` namespace and routes exist.
 - **Model storage:** Set the `MODEL_STORAGE_URI_*` environment variables and re-run the script with the skip flags above so only storage is patched.
@@ -220,7 +220,7 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
 
 1. Point ArgoCD at this repo and the `argocd` path:
    - **Path:** `argocd`
-   - **Repo:** set `repoURL` to your fork (replace `your-org` in `app-of-apps.yaml`).
+   - **Repo:** `argocd/app-of-apps.yaml` uses a placeholder `your-org`; the **bootstrap script** replaces it with your actual repo URL from `git remote origin` (or `GIT_REPO_URL`). Run the script so no manual edit is needed when you fork.
 
 2. Create the root Application (one-time):
    ```bash
@@ -261,7 +261,7 @@ From the repo root, with `oc` logged into your cluster, you can run one script t
 
 | Variable | Effect |
 |----------|--------|
-| `GIT_REPO_URL` | Git repo URL for ArgoCD (default: from `git remote get-url origin`) |
+| `GIT_REPO_URL` | Git repo URL for ArgoCD (default: from `git remote get-url origin`). Keeps the repo portable for forks. |
 | `SKIP_REPO_UPDATE` | Do not modify `argocd/app-of-apps.yaml` |
 | `SKIP_BOOTSTRAP_APP` | Do not create the bootstrap Application |
 | `SKIP_OAUTH_SECRETS` | Do not create OAuth session secrets |
@@ -276,7 +276,7 @@ From the repo root, with `oc` logged into your cluster, you can run one script t
 
 ```bash
 # Use a specific repo and set model storage (patch after sync)
-export GIT_REPO_URL="https://github.com/myorg/rhoai-3x-RAG-demo.git"
+export GIT_REPO_URL="https://github.com/YOUR_ORG/rhoai-3x-RAG-demo.git"
 export MODEL_STORAGE_URI_GPT_OSS_20B="s3://rhoai-models/gpt-OSS-20B"
 export MODEL_STORAGE_URI_GRANITE_7B="s3://rhoai-models/granite-7b"
 export MODEL_STORAGE_URI_GEMMA_2_9B="s3://rhoai-models/gemma-2-9b-it"
