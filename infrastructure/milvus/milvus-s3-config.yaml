@@ -1,20 +1,15 @@
-# S3 (or S3-compatible) endpoint config for standalone Milvus object storage.
-# Credentials are in Secret milvus-s3-credentials (create separately; do not commit).
-# PVs for etcd and Milvus local data use IBM storage (fibre channel).
+# Object storage config for Milvus. Default: in-cluster MinIO (installed by Argo).
+# For external S3: patch S3_ENDPOINT, S3_PORT, S3_USE_SSL, S3_BUCKET_NAME and replace milvus-s3-credentials.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: milvus-s3-config
   namespace: rag-demo
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "1"
 data:
-  # S3 or S3-compatible endpoint host (no port). Examples:
-  #   s3.amazonaws.com
-  #   s3.us-east-1.amazonaws.com
-  S3_ENDPOINT: "s3.amazonaws.com"
-  # Port: 443 for AWS S3 (HTTPS); 9000 for MinIO in-cluster
-  S3_PORT: "443"
-  S3_USE_SSL: "true"
-  # Bucket name (used by Milvus; some versions need it in config file)
+  # In-cluster MinIO (default). For AWS S3 use e.g. s3.amazonaws.com, port 443, SSL true.
+  S3_ENDPOINT: "milvus-minio.rag-demo.svc"
+  S3_PORT: "9000"
+  S3_USE_SSL: "false"
   S3_BUCKET_NAME: "milvus-rag"

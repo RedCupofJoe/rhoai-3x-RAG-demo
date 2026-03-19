@@ -13,8 +13,10 @@ resources:
   - ../../../namespace.yaml
   - ../../pvc-milvus.yaml
   - ../../milvus-s3-config.yaml
+  - ../../milvus-s3-credentials.yaml
   - ../../deployment-milvus.yaml
   - ../../service-milvus.yaml
+  - ../../job-minio-create-bucket.yaml
 patches:
   - path: pvc-etcd-patch.yaml
     target:
@@ -24,3 +26,7 @@ patches:
     target:
       kind: PersistentVolumeClaim
       name: milvus-data
+  - path: pvc-minio-patch.yaml
+    target:
+      kind: PersistentVolumeClaim
+      name: milvus-minio-data

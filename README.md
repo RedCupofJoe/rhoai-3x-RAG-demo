@@ -6,7 +6,7 @@ GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (
 
 - **Platform:** OpenShift 4.19+, RHOAI 3.0
 - **Hardware:** 2× NVIDIA H100 GPUs, 1TB RAM
-- **Vector DB:** Standalone Milvus with **S3** (or S3-compatible) object storage; **no MinIO** in-cluster.
+- **Vector DB:** Standalone Milvus; **in-cluster MinIO** (S3-compatible) installed by Argo during the infrastructure sync wave.
 - **PersistentVolumes:** Storage-agnostic (cluster default). Optional overlays for a specific storage class (e.g. **OpenShift IBM Storage Operator** for fibre channel); see [Optional: Storage class](#optional-storage-class).
 - **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog)
 
@@ -19,8 +19,8 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 - OpenShift CLI (`oc`) installed and in your `PATH`
 - Logged into the target cluster (`oc login`)
 - OpenShift GitOps (ArgoCD) installed (e.g. in `openshift-gitops`)
-- **S3 (or S3-compatible) bucket** and credentials for Milvus object storage  
-  (Optional: a specific **storage class** for PVCs—e.g. from the OpenShift IBM Storage Operator for fibre channel—see [Optional: Storage class](#optional-storage-class) below.)
+- (Optional) For **external S3** instead of in-cluster MinIO: S3 bucket and credentials; see [infrastructure/milvus/README.md](infrastructure/milvus/README.md).  
+  (Optional) A specific **storage class** for PVCs—e.g. from the OpenShift IBM Storage Operator for fibre channel—see [Optional: Storage class](#optional-storage-class) below.
 
 **Steps**
 
@@ -39,17 +39,16 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    oc login <your-cluster-api-url>
    ```
 
-3. **Create the Milvus S3 credentials secret** (required for vector DB; do not commit real keys):
+3. **Ensure namespace and (optional) custom object storage**
+
+   Argo installs **in-cluster MinIO** and a default credentials Secret during the infrastructure sync, so no manual secret is required for the demo. Ensure the namespace exists (the bootstrap script or Argo will create it):
 
    ```bash
    oc create namespace rag-demo --dry-run=client -o yaml | oc apply -f -
-   oc create secret generic milvus-s3-credentials -n rag-demo \
-     --from-literal=accesskeyid="YOUR_S3_ACCESS_KEY" \
-     --from-literal=secretaccesskey="YOUR_S3_SECRET_KEY"
    ```
 
-   Edit `infrastructure/milvus/milvus-s3-config.yaml` (or patch the ConfigMap after deploy) to set your S3 endpoint and bucket. See [infrastructure/milvus/README.md](infrastructure/milvus/README.md).  
-   **Storage (optional):** If you want a specific storage class for PVCs (e.g. IBM Storage Operator for fibre channel), see [Optional: Storage class](#optional-storage-class) before or during deploy.
+   For **external S3** or custom credentials, create the secret and edit `milvus-s3-config` before or after deploy. See [infrastructure/milvus/README.md](infrastructure/milvus/README.md).  
+   **Storage (optional):** For a specific storage class for PVCs (e.g. IBM Storage Operator for fibre channel), see [Optional: Storage class](#optional-storage-class).
 
 4. **Run the bootstrap script**
 
@@ -159,13 +158,15 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
 │   ├── namespace-*.yaml
 │   ├── operator-group-*.yaml
 │   └── subscription-*.yaml    # RHOAI, NVIDIA GPU, OpenShift Pipelines (GitOps optional)
-├── infrastructure/            # Wave 2 — Milvus/DB (standalone + S3, PVs on IBM storage)
+├── infrastructure/            # Wave 2 — Milvus + MinIO (object store), etcd; PVCs storage-agnostic
 │   ├── kustomization.yaml
 │   ├── namespace.yaml
 │   └── milvus/
-│       ├── README.md          # S3 config, optional storage class
-│       ├── pvc-milvus.yaml    # Storage-agnostic (no storageClassName)
+│       ├── README.md          # MinIO/S3 config, optional storage class
+│       ├── pvc-milvus.yaml    # etcd, Milvus, MinIO PVCs
 │       ├── milvus-s3-config.yaml
+│       ├── milvus-s3-credentials.yaml   # Default MinIO credentials (Argo)
+│       ├── job-minio-create-bucket.yaml # PostSync hook: create bucket
 │       ├── overlays/
 │       │   └── ibm-block/     # Optional: IBM Storage Operator / fibre channel
 │       ├── deployment-milvus.yaml
@@ -369,6 +370,6 @@ kubectl kustomize apps
 
 ---
 
-**Vector DB and storage:** Standalone Milvus uses **S3** (or S3-compatible) for object storage; create the `milvus-s3-credentials` secret and set the S3 endpoint/bucket in `milvus-s3-config` ConfigMap. **PersistentVolumes** for etcd and Milvus local data are storage-agnostic (cluster default); optionally use [infrastructure/milvus/overlays/ibm-block](infrastructure/milvus/overlays/ibm-block) for IBM Storage Operator / fibre channel, or add your own overlay. See [infrastructure/milvus/README.md](infrastructure/milvus/README.md).
+**Vector DB and storage:** Argo installs **in-cluster MinIO** and configures Milvus to use it (bucket `milvus-rag`). Default credentials are in Secret `milvus-s3-credentials`; for production or external S3, see [infrastructure/milvus/README.md](infrastructure/milvus/README.md). **PersistentVolumes** are storage-agnostic (cluster default); optionally use [infrastructure/milvus/overlays/ibm-block](infrastructure/milvus/overlays/ibm-block) for IBM Storage Operator / fibre channel.
 
 **Summary:** App-of-Apps in `argocd/` drives five child Applications (operators → infrastructure → models → pipelines → apps). Operators and health checks are conditional/documentary; model storage and GPU limits should be tuned for your 2× H100 SNO and RHOAI Model Catalog.

@@ -1,6 +1,6 @@
 # Standalone Milvus for RAG vector store.
-# Object storage: S3 (or S3-compatible). Metadata: etcd. Local data: PVC on IBM storage (fibre channel).
-# No MinIO deployment; configure S3 via milvus-s3-config ConfigMap and milvus-s3-credentials Secret.
+# Object storage: in-cluster MinIO (installed by Argo in sync-wave 1); or override via milvus-s3-config for external S3.
+# Metadata: etcd. Local data: PVCs.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -109,3 +109,55 @@ spec:
         - name: etcd-data
           persistentVolumeClaim:
             claimName: milvus-etcd-data
+---
+# MinIO for Milvus object storage (S3-compatible). Sync-wave 1 so it is ready before Milvus.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: milvus-minio
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: milvus-minio
+  template:
+    metadata:
+      labels:
+        app: milvus-minio
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:latest
+          args:
+            - server
+            - /data
+          ports:
+            - containerPort: 9000
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-s3-credentials
+                  key: accesskeyid
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-s3-credentials
+                  key: secretaccesskey
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+      volumes:
+        - name: minio-data
+          persistentVolumeClaim:
+            claimName: milvus-minio-data

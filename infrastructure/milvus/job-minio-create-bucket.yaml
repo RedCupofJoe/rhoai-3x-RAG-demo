@@ -1,0 +1,43 @@
+# One-time Job to create the S3 bucket in MinIO for Milvus. Argo PostSync hook so it runs after
+# infrastructure sync and is deleted on success (no conflict on re-sync).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: milvus-minio-create-bucket
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              mc alias set myminio "http://milvus-minio.rag-demo.svc:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb myminio/milvus-rag --ignore-existing
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-s3-credentials
+                  key: accesskeyid
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-s3-credentials
+                  key: secretaccesskey
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
