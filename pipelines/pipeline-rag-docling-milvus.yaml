@@ -1,4 +1,4 @@
-# Tekton Pipeline: monitor rag-doc/ -> Docling parse -> chunk & upsert to Milvus
+# Tekton Pipeline: sync rag-docs PVC -> S3 -> download -> Docling parse -> chunk & upsert to Milvus
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
@@ -7,7 +7,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "4"
 spec:
-  description: "Parse PDFs with Docling (remove_headers, remove_footers, remove_toc), then chunk and upsert to Milvus."
+  description: "Sync PVC to S3, download from S3, parse PDFs with Docling, then chunk and upsert to Milvus."
   params:
     - name: milvus-host
       type: string
@@ -15,19 +15,57 @@ spec:
     - name: collection-name
       type: string
       default: rag_docs
+    - name: s3-uri
+      type: string
+      default: s3://milvus-rag/rag-docs/
+      description: "S3 URI for document storage (sync target and download source)"
+    - name: s3-endpoint-url
+      type: string
+      default: "http://milvus-minio.rag-demo.svc:9000"
+      description: "S3/MinIO endpoint URL"
   workspaces:
     - name: rag-doc
-      description: "PVC for rag-doc/ directory"
+      description: "PVC for rag-docs/ directory (source for sync)"
+    - name: s3-downloaded
+      description: "Ephemeral workspace for S3-downloaded files (input to Docling)"
     - name: parsed-output
       description: "Temporary workspace for parsed markdown"
   tasks:
+    - name: sync-rag-docs-to-s3
+      taskRef:
+        name: sync-rag-docs-to-s3
+        kind: Task
+      params:
+        - name: s3-uri
+          value: $(params.s3-uri)
+        - name: s3-endpoint-url
+          value: $(params.s3-endpoint-url)
+      workspaces:
+        - name: rag-doc
+          workspace: rag-doc
+    - name: download-from-s3
+      taskRef:
+        name: download-from-s3
+        kind: Task
+      runAfter:
+        - sync-rag-docs-to-s3
+      params:
+        - name: s3-uri
+          value: $(params.s3-uri)
+        - name: s3-endpoint-url
+          value: $(params.s3-endpoint-url)
+      workspaces:
+        - name: rag-doc
+          workspace: s3-downloaded
     - name: docling-parse
       taskRef:
         name: docling-parse-pdf
         kind: Task
+      runAfter:
+        - download-from-s3
       workspaces:
         - name: rag-doc
-          workspace: rag-doc
+          workspace: s3-downloaded
         - name: output
           workspace: parsed-output
       params:

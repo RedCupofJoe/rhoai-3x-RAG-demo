@@ -1,0 +1,51 @@
+# Tekton Task: sync local rag-docs PVC to S3 (MinIO or AWS S3)
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: sync-rag-docs-to-s3
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  description: "Sync PDFs from the rag-docs PVC to an S3 bucket for the Docling pipeline."
+  params:
+    - name: source-dir
+      type: string
+      default: /workspace/rag-doc
+      description: "Path where rag-doc workspace is mounted (same as mount path below)"
+    - name: s3-uri
+      type: string
+      description: "S3 URI destination (e.g. s3://milvus-rag/rag-docs/)"
+    - name: s3-endpoint-url
+      type: string
+      default: "http://milvus-minio.rag-demo.svc:9000"
+      description: "S3/MinIO endpoint URL (use https:// for AWS S3)"
+  workspaces:
+    - name: rag-doc
+      description: "PVC containing rag-docs/ PDFs"
+  steps:
+    - name: sync-to-s3
+      image: amazon/aws-cli:2.15.0
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: milvus-s3-credentials
+              key: accesskeyid
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: milvus-s3-credentials
+              key: secretaccesskey
+      command:
+        - /bin/bash
+        - -c
+        - |
+          aws s3 sync "$(params.source-dir)" "$(params.s3-uri)" --endpoint-url "$(params.s3-endpoint-url)" --no-progress
+          echo "Synced rag-docs to $(params.s3-uri)"
+      volumeMounts:
+        - name: rag-doc
+          mountPath: /workspace/rag-doc
+  volumes:
+    - name: rag-doc
+      workspace: rag-doc

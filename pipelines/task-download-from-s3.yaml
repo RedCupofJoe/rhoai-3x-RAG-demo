@@ -1,0 +1,52 @@
+# Tekton Task: download documents from S3 into a workspace for Docling
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: download-from-s3
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  description: "Download PDFs from an S3 bucket into a workspace for the Docling pipeline."
+  params:
+    - name: s3-uri
+      type: string
+      description: "S3 URI source (e.g. s3://milvus-rag/rag-docs/)"
+    - name: s3-endpoint-url
+      type: string
+      default: "http://milvus-minio.rag-demo.svc:9000"
+      description: "S3/MinIO endpoint URL (use https:// for AWS S3)"
+    - name: dest-dir
+      type: string
+      default: /workspace/rag-doc
+      description: "Path where workspace is mounted; files will be written here"
+  workspaces:
+    - name: rag-doc
+      description: "Workspace to write downloaded files (used as Docling input)"
+  steps:
+    - name: download-from-s3
+      image: amazon/aws-cli:2.15.0
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: milvus-s3-credentials
+              key: accesskeyid
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: milvus-s3-credentials
+              key: secretaccesskey
+      command:
+        - /bin/bash
+        - -c
+        - |
+          mkdir -p "$(params.dest-dir)"
+          aws s3 sync "$(params.s3-uri)" "$(params.dest-dir)" --endpoint-url "$(params.s3-endpoint-url)" --no-progress
+          echo "Downloaded from $(params.s3-uri) to $(params.dest-dir)"
+      volumeMounts:
+        - name: rag-doc
+          mountPath: /workspace/rag-doc
+  volumes:
+    - name: rag-doc
+      workspace: rag-doc

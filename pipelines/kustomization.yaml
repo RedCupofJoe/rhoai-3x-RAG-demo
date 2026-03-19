@@ -4,6 +4,8 @@ namespace: rag-demo
 resources:
   - pipeline-rag-docling-milvus.yaml
   - task-docling-parse.yaml
+  - task-sync-rag-docs-to-s3.yaml
+  - task-download-from-s3.yaml
   - task-chunk-upsert-milvus.yaml
   - pvc-rag-docs.yaml
   - trigger-event-listener.yaml

@@ -99,7 +99,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 
 8. **Optional: run the RAG pipeline** (after pipelines and PVC are synced)
 
-   To ingest PDFs from the `rag-docs` PVC into Milvus:
+   To ingest PDFs from the `rag-docs` PVC into Milvus (pipeline syncs PVC → S3, then downloads from S3 and runs Docling):
 
    ```bash
    oc create -f - <<EOF
@@ -116,10 +116,17 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
          value: milvus.rag-demo.svc
        - name: collection-name
          value: rag_docs
+       # Optional: override S3 (defaults: s3://milvus-rag/rag-docs/, MinIO in-cluster)
+       # - name: s3-uri
+       #   value: s3://milvus-rag/rag-docs/
+       # - name: s3-endpoint-url
+       #   value: http://milvus-minio.rag-demo.svc:9000
      workspaces:
        - name: rag-doc
          persistentVolumeClaim:
            claimName: rag-docs
+       - name: s3-downloaded
+         emptyDir: {}
        - name: parsed-output
          volumeClaimTemplate:
            spec:
@@ -183,6 +190,8 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
 │   ├── kustomization.yaml
 │   ├── pvc-rag-docs.yaml
 │   ├── task-docling-parse.yaml
+│   ├── task-sync-rag-docs-to-s3.yaml
+│   ├── task-download-from-s3.yaml
 │   ├── task-chunk-upsert-milvus.yaml
 │   ├── pipeline-rag-docling-milvus.yaml
 │   ├── trigger-event-listener.yaml
@@ -333,18 +342,54 @@ Model storage paths reference RHOAI Model Catalog; set `spec.predictor.model.sto
 ## Data Pipeline (Wave 4)
 
 - **Tekton Pipeline** `rag-docling-milvus`:
-  1. **Task 1 — Docling:** Reads from `rag-doc/` (PVC `rag-docs`), parses PDFs, applies **remove_headers**, **remove_footers**, **remove_toc** (see [scripts/docling_parse.py](pipelines/scripts/docling_parse.py)), writes markdown to a workspace.
-  2. **Task 2 — Chunk & upsert:** Chunks markdown and upserts vectors into the standalone Milvus instance (S3 object storage).
+  1. **Sync to S3:** Copies the local `rag-docs` PVC contents to an S3 bucket (default: in-cluster MinIO `s3://milvus-rag/rag-docs/`).
+  2. **Download from S3:** Downloads from that S3 URI into an ephemeral workspace for Docling.
+  3. **Docling:** Reads the downloaded files, parses PDFs, applies **remove_headers**, **remove_footers**, **remove_toc** (see [scripts/docling_parse.py](pipelines/scripts/docling_parse.py)), writes markdown to a workspace.
+  4. **Chunk & upsert:** Chunks markdown and upserts vectors into the standalone Milvus instance (S3 object storage).
+
+  Pipeline params `s3-uri` (default `s3://milvus-rag/rag-docs/`) and `s3-endpoint-url` (default `http://milvus-minio.rag-demo.svc:9000`) can be overridden for AWS S3 or another MinIO endpoint.
 
 - **Docling script:** [pipelines/scripts/docling_parse.py](pipelines/scripts/docling_parse.py) — Python logic for header/footer/TOC removal (post-process on exported markdown).
 - **rag-doc/** is in [.gitignore](.gitignore); do not commit raw PDFs.
 
-Run the pipeline manually or via Trigger/Cron (see `pipelines/trigger-event-listener.yaml`). PipelineRun example:
+**Where to put files for the vector database:** Put your **PDFs** (or other documents the pipeline supports) into the **`rag-docs`** PVC in the **`rag-demo`** namespace. The pipeline **syncs that PVC to S3** (MinIO bucket `milvus-rag/rag-docs/` by default), **downloads from S3** into a workspace, then runs Docling and chunk/upsert. After the pipeline runs, chunks are embedded and upserted into Milvus.
+
+**Copying files into the PVC:** Run a pod that mounts the `rag-docs` PVC, then copy your PDFs into it from your machine.
 
 ```bash
-oc create -f pipelines/trigger-event-listener.yaml  # reference only
-# Or create a PipelineRun that references pipeline rag-docling-milvus and PVC rag-docs
+# 1. Create a pod that mounts the PVC (ensure rag-demo namespace and rag-docs PVC exist)
+oc apply -n rag-demo -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rag-doc-upload
+  namespace: rag-demo
+spec:
+  containers:
+    - name: upload
+      image: registry.access.redhat.com/ubi9/minimal
+      command: ["sleep", "3600"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: rag-docs
+  restartPolicy: Never
+EOF
+
+# 2. Wait for the pod to be Running, then sync your local PDFs into it
+oc wait --for=condition=Ready pod/rag-doc-upload -n rag-demo --timeout=60s
+oc rsync ./my-pdfs/ rag-doc-upload:/data/ -n rag-demo
+
+# 3. Delete the pod when done (the data remains in the PVC)
+oc delete pod rag-doc-upload -n rag-demo
 ```
+
+The pipeline reads everything under the PVC root as `/workspace/rag-doc`, so PDFs in `/data/` (or any subfolder) in this pod are the ones that get processed. If your PVC uses **ReadWriteOnce**, the upload pod must run in a node that can attach the volume (same as the pipeline).
+
+Run the pipeline manually or via Trigger/Cron (see `pipelines/trigger-event-listener.yaml`). The template in that file wires the `rag-doc` PVC, `s3-downloaded` emptyDir, and `parsed-output` volumeClaimTemplate; override params `s3-uri` and `s3-endpoint-url` for a different S3 bucket or endpoint.
 
 ## Frontends (Wave 5) — Open WebUI + OAuth
 

@@ -39,6 +39,8 @@ spec:
     - name: rag-doc
       persistentVolumeClaim:
         claimName: rag-docs
+    - name: s3-downloaded
+      emptyDir: {}
     - name: parsed-output
       volumeClaimTemplate:
         spec:
