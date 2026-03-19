@@ -63,15 +63,14 @@ def main() -> int:
     for md_path in md_files:
         text = md_path.read_text(encoding="utf-8")
         chunks = chunk_text(text, chunk_size=args.chunk_size, overlap=args.chunk_overlap)
-        if not chunks:
-            continue
-        vecs = model.encode(chunks).tolist()
         for i, c in enumerate(chunks):
             uid = hashlib.sha256(f"{md_path.name}:{i}:{c[:64]}".encode()).hexdigest()[:64]
             all_ids.append(uid)
             all_texts.append(c[:65535])
             all_sources.append(str(md_path.name))
-            all_vectors.append(vecs[i])
+        if chunks:
+            vecs = model.encode(chunks).tolist()
+            all_vectors.extend(vecs)
 
     if not all_ids:
         print("No chunks to insert")

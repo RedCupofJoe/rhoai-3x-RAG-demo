@@ -9,6 +9,118 @@ GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (
 - **Storage/DB:** Inline Milvus (RHOAI-integrated or standalone)
 - **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog)
 
+## Install from terminal
+
+Follow these steps from a terminal to install the RAG demo on the OpenShift cluster you are logged into.
+
+**Prerequisites**
+
+- OpenShift CLI (`oc`) installed and in your `PATH`
+- Logged into the target cluster (`oc login`)
+- OpenShift GitOps (ArgoCD) installed (e.g. in `openshift-gitops`)
+
+**Steps**
+
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/your-org/rhoai-3x-RAG-demo.git
+   cd rhoai-3x-RAG-demo
+   ```
+
+   If you use your own fork, clone that URL instead.
+
+2. **Log in to OpenShift** (if not already)
+
+   ```bash
+   oc login <your-cluster-api-url>
+   ```
+
+3. **Run the bootstrap script**
+
+   The script updates the repo URL in the App-of-Apps manifest, creates the bootstrap ArgoCD Application, OAuth session secrets for the three UIs, and (optionally) ConsoleLinks and model storage patches.
+
+   ```bash
+   chmod +x scripts/bootstrap-rag-demo.sh
+   ./scripts/bootstrap-rag-demo.sh
+   ```
+
+   The script uses your `git remote origin` URL as the ArgoCD repo. To override:
+
+   ```bash
+   export GIT_REPO_URL="https://github.com/myorg/rhoai-3x-RAG-demo.git"
+   ./scripts/bootstrap-rag-demo.sh
+   ```
+
+4. **Push the updated manifest** (if the script changed `argocd/app-of-apps.yaml`)
+
+   ArgoCD syncs from the repo; after the script runs, the file contains your repo URL. Commit and push so ArgoCD sees it:
+
+   ```bash
+   git add argocd/app-of-apps.yaml
+   git commit -m "Set repoURL for ArgoCD"
+   git push
+   ```
+
+5. **Wait for ArgoCD to sync**
+
+   In the OpenShift console, open the GitOps application and confirm the five child applications (operators → infrastructure → models → pipelines → apps) sync in order. Or from the terminal:
+
+   ```bash
+   oc get applications -n openshift-gitops
+   ```
+
+6. **Optional: set model storage URIs and re-run**
+
+   After the `rag-demo` namespace and InferenceServices exist, you can patch storage (e.g. S3 or RHOAI Model Catalog URIs) and optionally add ConsoleLinks:
+
+   ```bash
+   export MODEL_STORAGE_URI_GPT_OSS_20B="s3://your-bucket/gpt-OSS-20B"
+   export MODEL_STORAGE_URI_GRANITE_7B="s3://your-bucket/granite-7b"
+   export MODEL_STORAGE_URI_GEMMA_2_9B="s3://your-bucket/gemma-2-9b-it"
+   SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1 ./scripts/bootstrap-rag-demo.sh
+   ```
+
+7. **Optional: run the RAG pipeline** (after pipelines and PVC are synced)
+
+   To ingest PDFs from the `rag-docs` PVC into Milvus:
+
+   ```bash
+   oc create -f - <<EOF
+   apiVersion: tekton.dev/v1beta1
+   kind: PipelineRun
+   metadata:
+     generateName: rag-docling-milvus-run-
+     namespace: rag-demo
+   spec:
+     pipelineRef:
+       name: rag-docling-milvus
+     params:
+       - name: milvus-host
+         value: milvus.rag-demo.svc
+       - name: collection-name
+         value: rag_docs
+     workspaces:
+       - name: rag-doc
+         persistentVolumeClaim:
+           claimName: rag-docs
+       - name: parsed-output
+         volumeClaimTemplate:
+           spec:
+             accessModes: [ReadWriteOnce]
+             resources:
+               requests:
+                 storage: 5Gi
+     timeout: 1h0m0s
+   EOF
+   ```
+
+**Troubleshooting**
+
+- **Bootstrap Application not syncing:** Ensure `argocd/app-of-apps.yaml` is pushed and the repo URL in the bootstrap Application matches your push target.
+- **OAuth or ConsoleLinks:** Re-run the script without skip flags after the `rag-demo` namespace and routes exist.
+- **Model storage:** Set the `MODEL_STORAGE_URI_*` environment variables and re-run the script with the skip flags above so only storage is patched.
+
 ## Repository Layout
 
 ```
@@ -194,9 +306,9 @@ Each has:
 Before first use, create the session secret for each UI:
 
 ```bash
-oc create secret generic open-webui-gpt-oss-oauth -n rag-demo --from-literal=session_secret=$(head -c 43 /dev/urandom | base64)
-oc create secret generic open-webui-granite-oauth -n rag-demo --from-literal=session_secret=$(head -c 43 /dev/urandom | base64)
-oc create secret generic open-webui-gemma-oauth -n rag-demo --from-literal=session_secret=$(head -c 43 /dev/urandom | base64)
+oc create secret generic open-webui-gpt-oss-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
+oc create secret generic open-webui-granite-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
+oc create secret generic open-webui-gemma-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
 ```
 
 (Or replace `CHANGE_ME_USE_OC_CREATE_SECRET` in the Git secrets and use a secrets manager.)

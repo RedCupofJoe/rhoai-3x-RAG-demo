@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,11 +31,17 @@ def remove_headers_footers_toc(doc) -> None:
     pass  # Applied in export step below
 
 
-def filter_markdown_headers_footers_toc(md: str) -> str:
+def filter_markdown_headers_footers_toc(
+    md: str,
+    *,
+    remove_headers: bool = False,
+    remove_footers: bool = False,
+    remove_toc: bool = False,
+) -> str:
     """
-    Filter markdown string to remove common header/footer/TOC patterns.
-    - Headers: short lines repeated at start of logical pages (e.g. "Chapter 1" only)
-    - Footers: lines like "Page X of Y", "© 2024", "- 1 -"
+    Filter markdown string to remove header/footer/TOC patterns based on flags.
+    - Headers: short lines that look like "Chapter N" or section titles
+    - Footers: lines like "Page X of Y", "© 2024", "- 1 -", standalone page numbers
     - TOC: lines that look like "Section Title .............. 12" (dots + number at end)
     """
     lines = md.split("\n")
@@ -44,17 +51,24 @@ def filter_markdown_headers_footers_toc(md: str) -> str:
         if not s:
             out.append(line)
             continue
-        # Skip common footer patterns
-        if s.startswith("-") and s.endswith("-") and len(s) < 20:
-            continue
-        if "Page " in s and " of " in s and any(c.isdigit() for c in s):
-            continue
-        if s.isdigit() and len(s) <= 4:  # standalone page number
-            continue
-        # Skip TOC-like: ends with many dots and a number
-        if "..." in s or " . " in s:
-            parts = s.replace("...", ".").split()
-            if len(parts) >= 2 and parts[-1].isdigit() and len(parts[-1]) <= 4:
+        if remove_footers:
+            if s.startswith("-") and s.endswith("-") and len(s) < 20:
+                continue
+            if "Page " in s and " of " in s and any(c.isdigit() for c in s):
+                continue
+            if s.isdigit() and len(s) <= 4:  # standalone page number
+                continue
+        if remove_toc:
+            if "..." in s or " . " in s:
+                parts = s.replace("...", ".").split()
+                if len(parts) >= 2 and parts[-1].isdigit() and len(parts[-1]) <= 4:
+                    continue
+        if remove_headers:
+            # Short line that looks like "Chapter N" or "Section 1" or all-caps title
+            if len(s) < 50 and (
+                re.match(r"^(Chapter|Section|Part)\s+\d+\s*$", s, re.I)
+                or (len(s) < 30 and s.isupper())
+            ):
                 continue
         out.append(line)
     return "\n".join(out)
@@ -64,9 +78,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Parse PDFs with Docling (remove_headers, remove_footers, remove_toc)")
     parser.add_argument("--input-dir", type=str, default="/workspace/rag-doc", help="Input directory containing PDFs")
     parser.add_argument("--output-dir", type=str, default="/workspace/output", help="Output directory for markdown")
-    parser.add_argument("--remove-headers", action="store_true", default=True, help="Apply header removal heuristic")
-    parser.add_argument("--remove-footers", action="store_true", default=True, help="Apply footer removal heuristic")
-    parser.add_argument("--remove-toc", action="store_true", default=True, help="Apply TOC removal heuristic")
+    parser.add_argument("--remove-headers", action="store_true", default=False, help="Apply header removal heuristic")
+    parser.add_argument("--remove-footers", action="store_true", default=False, help="Apply footer removal heuristic")
+    parser.add_argument("--remove-toc", action="store_true", default=False, help="Apply TOC removal heuristic")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -95,7 +109,12 @@ def main() -> int:
             doc = result.document
             md = doc.export_to_markdown()
             if args.remove_headers or args.remove_footers or args.remove_toc:
-                md = filter_markdown_headers_footers_toc(md)
+                md = filter_markdown_headers_footers_toc(
+                    md,
+                    remove_headers=args.remove_headers,
+                    remove_footers=args.remove_footers,
+                    remove_toc=args.remove_toc,
+                )
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(md, encoding="utf-8")
             manifest.append({"input": str(rel), "output": str(out_path.relative_to(output_dir)), "status": "ok"})
