@@ -80,10 +80,10 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 
 6. **Wait for ArgoCD to sync**
 
-   In the OpenShift console, open the GitOps application and confirm the five child applications (operators → infrastructure → models → pipelines → apps) sync in order. Or from the terminal:
+   In the OpenShift console, open the GitOps application and confirm the five child applications (operators → infrastructure → models → pipelines → apps) sync in order. Or from the terminal (use `applications.argoproj.io` so Argo CD apps are listed, not the other Applications CRD):
 
    ```bash
-   oc get applications -n openshift-gitops
+   oc get applications.argoproj.io -n openshift-gitops
    ```
 
 7. **Optional: set model storage URIs and re-run**
@@ -159,6 +159,7 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
 
 ```
 .
+├── rag-doc/                   # Local document drop (add PDFs here; contents ignored except .gitkeep)
 ├── argocd/                    # App-of-Apps and ArgoCD config
 │   ├── app-of-apps.yaml       # Child Applications (Wave 1–5)
 │   ├── kustomization.yaml
@@ -222,7 +223,8 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
    - **Path:** `argocd`
    - **Repo:** `argocd/app-of-apps.yaml` uses a placeholder `your-org`; the **bootstrap script** replaces it with your actual repo URL from `git remote origin` (or `GIT_REPO_URL`). Run the script so no manual edit is needed when you fork.
 
-2. Create the root Application (one-time):
+2. Create the root Application (one-time). Include `directory.recurse: true` so the app-of-apps manifests are applied (the bootstrap script does this when it creates/patches the app):
+
    ```bash
    oc apply -f - <<EOF
    apiVersion: argoproj.io/v1alpha1
@@ -236,6 +238,8 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
        repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git
        path: argocd
        targetRevision: main
+       directory:
+         recurse: true
      destination:
        server: https://kubernetes.default.svc
        namespace: openshift-gitops
@@ -351,7 +355,7 @@ Model storage paths reference RHOAI Model Catalog; set `spec.predictor.model.sto
   Pipeline params `s3-uri` (default `s3://milvus-rag/rag-docs/`) and `s3-endpoint-url` (default `http://milvus-minio.rag-demo.svc:9000`) can be overridden for AWS S3 or another MinIO endpoint.
 
 - **Docling script:** [pipelines/scripts/docling_parse.py](pipelines/scripts/docling_parse.py) — Python logic for header/footer/TOC removal (post-process on exported markdown).
-- **rag-doc/** is in [.gitignore](.gitignore); do not commit raw PDFs.
+- **rag-doc/** exists in the repo (with [.gitignore](.gitignore) so only `rag-doc/.gitkeep` is tracked; add PDFs locally and do not commit raw PDFs).
 
 **Where to put files for the vector database:** Put your **PDFs** (or other documents the pipeline supports) into the **`rag-docs`** PVC in the **`rag-demo`** namespace. The pipeline **syncs that PVC to S3** (MinIO bucket `milvus-rag/rag-docs/` by default), **downloads from S3** into a workspace, then runs Docling and chunk/upsert. After the pipeline runs, chunks are embedded and upserted into Milvus.
 
@@ -380,9 +384,9 @@ spec:
   restartPolicy: Never
 EOF
 
-# 2. Wait for the pod to be Running, then sync your local PDFs into it
+# 2. Wait for the pod to be Running, then sync your local PDFs into it (e.g. from ./rag-doc/ or ./my-pdfs/)
 oc wait --for=condition=Ready pod/rag-doc-upload -n rag-demo --timeout=60s
-oc rsync ./my-pdfs/ rag-doc-upload:/data/ -n rag-demo
+oc rsync ./rag-doc/ rag-doc-upload:/data/ -n rag-demo
 
 # 3. Delete the pod when done (the data remains in the PVC)
 oc delete pod rag-doc-upload -n rag-demo
@@ -390,7 +394,7 @@ oc delete pod rag-doc-upload -n rag-demo
 
 The pipeline reads everything under the PVC root as `/workspace/rag-doc`, so PDFs in `/data/` (or any subfolder) in this pod are the ones that get processed. If your PVC uses **ReadWriteOnce**, the upload pod must run in a node that can attach the volume (same as the pipeline).
 
-Run the pipeline manually or via Trigger/Cron (see `pipelines/trigger-event-listener.yaml`). The template in that file wires the `rag-doc` PVC, `s3-downloaded` emptyDir, and `parsed-output` volumeClaimTemplate; override params `s3-uri` and `s3-endpoint-url` for a different S3 bucket or endpoint.
+Run the pipeline manually or via Trigger/Cron (see `pipelines/trigger-event-listener.yaml`). The template in that file wires the `rag-docs` PVC (workspace name `rag-doc`), `s3-downloaded` emptyDir, and `parsed-output` volumeClaimTemplate; override params `s3-uri` and `s3-endpoint-url` for a different S3 bucket or endpoint.
 
 ## Frontends (Wave 5) — Open WebUI + OAuth
 
@@ -438,7 +442,7 @@ kubectl kustomize apps
 
 ## .gitignore
 
-`rag-doc/` and `*.pdf` are ignored so raw documents are not committed.
+Contents of `rag-doc/` are ignored (except `rag-doc/.gitkeep`) and `*.pdf` are ignored everywhere, so raw documents are not committed. The `rag-doc/` folder itself is in the repo so clones get an empty drop directory.
 
 ---
 
