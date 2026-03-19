@@ -64,20 +64,31 @@ ensure_gitops_operator() {
     return 0
   fi
 
-  local sub_ns="openshift-operators"
+  # OpenShift 4.20 / GitOps 1.10+: install in openshift-gitops-operator (recommended); older used openshift-operators
+  local sub_ns="openshift-gitops-operator"
   local sub_name="openshift-gitops-operator"
   local wait_timeout=600
   local interval=15
+  local csv_timeout=300
 
+  # Prefer openshift-gitops-operator; accept existing install in legacy openshift-operators
   if oc get subscription "${sub_name}" -n "${sub_ns}" &>/dev/null; then
     log "OpenShift GitOps operator Subscription already present (${sub_ns}/${sub_name})."
+  elif oc get subscription "${sub_name}" -n openshift-operators &>/dev/null; then
+    log "OpenShift GitOps operator found in legacy namespace openshift-operators; using it (consider reinstalling in ${sub_ns} for 4.20)."
+    sub_ns="openshift-operators"
   else
-    log "OpenShift GitOps operator not found. Creating Subscription in ${sub_ns}."
-    if ! oc get namespace "${sub_ns}" &>/dev/null; then
-      log "Creating namespace ${sub_ns}."
-      oc create namespace "${sub_ns}"
-    fi
+    log "OpenShift GitOps operator not found. Creating namespace ${sub_ns}, OperatorGroup, and Subscription (OpenShift 4.20 / GitOps 1.10+)."
+    oc create namespace "${sub_ns}" --dry-run=client -o yaml | oc apply -f -
     oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-gitops-operator
+  namespace: ${sub_ns}
+spec:
+  upgradeStrategy: Default
+---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
@@ -90,14 +101,50 @@ spec:
   source: redhat-operators
   sourceNamespace: openshift-marketplace
 EOF
-    log "Subscription created. Waiting up to ${wait_timeout}s for OpenShift GitOps to be ready."
+    log "Subscription created. Waiting up to ${csv_timeout}s for operator CSV to succeed, then for ${NAMESPACE_GITOPS}."
   fi
 
-  # Wait for openshift-gitops namespace
+  # Wait for ClusterServiceVersion (operator install) to succeed so operator can create openshift-gitops
   local elapsed=0
+  local csv_phase=""
+  while [[ $elapsed -lt $csv_timeout ]]; do
+    local csv_name
+    csv_name=$(oc get csv -n "${sub_ns}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -m1 openshift-gitops || true)
+    if [[ -n "${csv_name}" ]]; then
+      csv_phase=$(oc get csv "${csv_name}" -n "${sub_ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    else
+      csv_phase=""
+    fi
+    if [[ "$csv_phase" == "Succeeded" ]]; then
+      log "OpenShift GitOps operator CSV succeeded."
+      break
+    fi
+    if [[ "$csv_phase" == "Failed" ]]; then
+      err "OpenShift GitOps operator CSV is Failed. Check: oc get csv -n ${sub_ns}; oc describe csv -n ${sub_ns}"
+      err "Ensure redhat-operators catalog is available: oc get catalogsource -n openshift-marketplace"
+      return 1
+    fi
+    # Log InstallPlan/CSV status every 60s
+    if [[ $((elapsed % 60)) -eq 0 && $elapsed -gt 0 ]]; then
+      log "Operator install status: CSV phase=${csv_phase:-'(none)'}. Check: oc get subscription,installplan,csv -n ${sub_ns}"
+    fi
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+  if [[ "$csv_phase" != "Succeeded" ]]; then
+    err "Timeout waiting for OpenShift GitOps operator CSV to succeed (${csv_timeout}s)."
+    err "Diagnose: oc get subscription,installplan,csv -n ${sub_ns}; oc get catalogsource -n openshift-marketplace"
+    err "On sandbox clusters, ensure Marketplace/redhat-operators is enabled, or install GitOps from the web console (Operators -> OperatorHub -> OpenShift GitOps), then re-run with SKIP_GITOPS_INSTALL=1"
+    return 1
+  fi
+
+  # Wait for openshift-gitops namespace (operator creates it when it deploys the default Argo CD instance)
+  elapsed=0
   while ! oc get namespace "${NAMESPACE_GITOPS}" &>/dev/null; do
     if [[ $elapsed -ge $wait_timeout ]]; then
-      err "Timeout waiting for namespace ${NAMESPACE_GITOPS}. Install the OpenShift GitOps operator from OperatorHub and re-run."
+      err "Timeout waiting for namespace ${NAMESPACE_GITOPS}."
+      err "The operator is installed but did not create the namespace. Check: oc get pods -n ${sub_ns}; oc get pods -n ${NAMESPACE_GITOPS}"
+      err "Install OpenShift GitOps from the web console (Operators -> OperatorHub -> OpenShift GitOps) if needed, then re-run with SKIP_GITOPS_INSTALL=1"
       return 1
     fi
     log "Waiting for namespace ${NAMESPACE_GITOPS}... (${elapsed}s)"
@@ -114,7 +161,6 @@ EOF
         return 0
       fi
     fi
-    # Fallback: check for server deployment or any argocd pod
     if oc get deployment -n "${NAMESPACE_GITOPS}" -o name 2>/dev/null | grep -q gitops-server; then
       if oc get deployment openshift-gitops-server -n "${NAMESPACE_GITOPS}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -qE '^[1-9]'; then
         log "OpenShift GitOps (Argo CD) is ready in ${NAMESPACE_GITOPS}."
