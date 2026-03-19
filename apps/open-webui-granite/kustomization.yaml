@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rag-demo
+resources:
+  - deployment.yaml
+  - service.yaml
+  - route.yaml
+  - service-account.yaml
+  - oauth-secret.yaml
+commonLabels:
+  app.kubernetes.io/component: frontend
+  rag-demo/model: granite-7b

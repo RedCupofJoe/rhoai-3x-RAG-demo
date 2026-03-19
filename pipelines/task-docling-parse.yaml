@@ -1,0 +1,50 @@
+# Tekton Task: parse PDFs with Docling (remove_headers, remove_footers, remove_toc)
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: docling-parse-pdf
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  description: "Parse PDFs from rag-doc with Docling; output markdown for chunking."
+  params:
+    - name: input-dir
+      type: string
+      default: /workspace/rag-doc
+      description: "Directory containing PDFs (e.g. rag-doc)"
+    - name: output-dir
+      type: string
+      default: /workspace/parsed
+      description: "Output directory for markdown files"
+  workspaces:
+    - name: rag-doc
+      description: "PVC containing rag-doc/ PDFs"
+    - name: output
+      description: "Workspace for parsed markdown; mounted at output-dir so step writes land here"
+  steps:
+    - name: parse-pdfs
+      image: quay.io/opendatahub/docling:latest
+      workingDir: $(params.input-dir)
+      command:
+        - /bin/bash
+      args:
+        - -c
+        - |
+          export PYTHONPATH=/opt/scripts
+          python3 /opt/scripts/docling_parse.py \
+            --input-dir $(params.input-dir) \
+            --output-dir $(params.output-dir) \
+            --remove-headers --remove-footers --remove-toc
+      volumeMounts:
+        - name: rag-doc
+          mountPath: $(params.input-dir)
+        - name: output
+          mountPath: $(params.output-dir)
+        - name: scripts
+          mountPath: /opt/scripts
+          readOnly: true
+  volumes:
+    - name: scripts
+      configMap:
+        name: docling-parse-scripts

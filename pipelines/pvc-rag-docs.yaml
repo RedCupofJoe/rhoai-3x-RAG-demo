@@ -1,0 +1,15 @@
+# PVC for rag-doc/ content (mounted in pipeline; populate via rsync or upload)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rag-docs
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: nfs  # or cluster default for RWX

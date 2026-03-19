@@ -1,0 +1,40 @@
+# vLLM ServingRuntime for RHOAI Model Catalog models (GPU fraction via resource limits)
+# 2x H100 partitioned: 3 models + 2 workbenches; each model gets fractional GPU to avoid OOM
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-gpu-runtime
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    openshift.io/display-name: "vLLM GPU (H100)"
+spec:
+  supportedModelFormats:
+    - name: huggingface
+      version: "1"
+      autoSelect: true
+    - name: vllm
+      version: "1"
+      autoSelect: true
+  multiModel: false
+  protocolVersions:
+    - v2
+  grpcDataEndpoint: "port:8001"
+  containers:
+    - name: kserve-container
+      image: quay.io/opendatahub/kserve-vllm:latest
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "40Gi"
+          cpu: "8"
+        requests:
+          nvidia.com/gpu: "1"
+          memory: "32Gi"
+          cpu: "4"
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: Exists
+      effect: NoSchedule

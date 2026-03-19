@@ -1,0 +1,25 @@
+# RAG document drop directory - do not commit raw PDFs
+rag-doc/
+*.pdf
+
+# GitOps / local overrides
+*.local.yaml
+*.local.yml
+secrets/
+
+# Python / Tekton task env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

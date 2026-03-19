@@ -1,0 +1,53 @@
+# Tekton Pipeline: monitor rag-doc/ -> Docling parse -> chunk & upsert to Milvus
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: rag-docling-milvus
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  description: "Parse PDFs with Docling (remove_headers, remove_footers, remove_toc), then chunk and upsert to Milvus."
+  params:
+    - name: milvus-host
+      type: string
+      default: milvus.rag-demo.svc
+    - name: collection-name
+      type: string
+      default: rag_docs
+  workspaces:
+    - name: rag-doc
+      description: "PVC for rag-doc/ directory"
+    - name: parsed-output
+      description: "Temporary workspace for parsed markdown"
+  tasks:
+    - name: docling-parse
+      taskRef:
+        name: docling-parse-pdf
+        kind: Task
+      workspaces:
+        - name: rag-doc
+          workspace: rag-doc
+        - name: output
+          workspace: parsed-output
+      params:
+        - name: input-dir
+          value: /workspace/rag-doc
+        - name: output-dir
+          value: /workspace/parsed
+    - name: chunk-upsert-milvus
+      taskRef:
+        name: chunk-upsert-milvus
+        kind: Task
+      runAfter:
+        - docling-parse
+      workspaces:
+        - name: input
+          workspace: parsed-output
+      params:
+        - name: input-dir
+          value: /workspace/parsed
+        - name: milvus-host
+          value: $(params.milvus-host)
+        - name: collection-name
+          value: $(params.collection-name)

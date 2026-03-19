@@ -1,0 +1,55 @@
+# Tekton Task: chunk markdown and upsert vectors into inline Milvus
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: chunk-upsert-milvus
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  description: "Chunk parsed markdown and upsert into Milvus vector DB."
+  params:
+    - name: input-dir
+      type: string
+      default: /workspace/parsed
+    - name: milvus-host
+      type: string
+      default: milvus.rag-demo.svc
+    - name: milvus-port
+      type: string
+      default: "19530"
+    - name: collection-name
+      type: string
+      default: rag_docs
+    - name: chunk-size
+      type: string
+      default: "512"
+    - name: chunk-overlap
+      type: string
+      default: "64"
+  workspaces:
+    - name: input
+      description: "Parsed markdown from Docling task"
+  steps:
+    - name: chunk-and-upsert
+      image: quay.io/opendatahub/ubi9-python-311:latest
+      script: |
+        #!/usr/bin/env python3
+        pip install --user pymilvus sentence-transformers --quiet
+        python3 /opt/scripts/chunk_upsert_milvus.py \
+          --input-dir $(params.input-dir) \
+          --milvus-host $(params.milvus-host) \
+          --milvus-port $(params.milvus-port) \
+          --collection $(params.collection-name) \
+          --chunk-size $(params.chunk-size) \
+          --chunk-overlap $(params.chunk-overlap)
+      volumeMounts:
+        - name: input
+          mountPath: $(params.input-dir)
+        - name: scripts
+          mountPath: /opt/scripts
+          readOnly: true
+  volumes:
+    - name: scripts
+      configMap:
+        name: chunk-upsert-scripts

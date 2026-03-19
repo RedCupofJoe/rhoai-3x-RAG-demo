@@ -1,0 +1,43 @@
+# ArgoCD Resource Health customizations - apply to argocd-cm ConfigMap
+# Copy the data below into openshift-gitops/argocd-cm under data.resource.customizations
+#
+# Example: oc -n openshift-gitops patch cm argocd-cm --type merge -p '{"data":{"resource.customizations.health.serving.kserve.io~1InferenceService":"\n  lua: |\n    hs = {}\n    if obj.status == nil then\n      hs.status = \"Progressing\"\n      hs.message = \"No status\"\n      return hs\n    end\n    for _, c in ipairs(obj.status.conditions or {}) do\n      if c.type == \"Ready\" and c.status == \"True\" then\n        hs.status = \"Healthy\"\n        return hs\n      end\n      if c.type == \"Ready\" and c.status == \"False\" then\n        hs.status = \"Degraded\"\n        hs.message = c.message or c.reason\n        return hs\n      end\n    end\n    hs.status = \"Progressing\"\n    return hs\n"}}'
+#
+# InferenceService (KServe) health:
+# resource.customizations.health.serving.kserve.io/InferenceService: |
+#   lua: |
+#     hs = {}
+#     if obj.status == nil then
+#       hs.status = "Progressing"
+#       hs.message = "No status"
+#       return hs
+#     end
+#     for _, c in ipairs(obj.status.conditions or {}) do
+#       if c.type == "Ready" and c.status == "True" then
+#         hs.status = "Healthy"
+#         return hs
+#       end
+#       if c.type == "Ready" and c.status == "False" then
+#         hs.status = "Degraded"
+#         hs.message = c.message or c.reason
+#         return hs
+#       end
+#     end
+#     hs.status = "Progressing"
+#     return hs
+#
+# Subscription (OLM) health:
+# resource.customizations.health.operators.coreos.com~1Subscription: |
+#   lua: |
+#     hs = {}
+#     if obj.status == nil then hs.status = "Progressing"; return hs end
+#     for _, c in ipairs(obj.status.conditions or {}) do
+#       if c.type == "CatalogSourcesUnhealthy" and c.status == "True" then
+#         hs.status = "Degraded"
+#         hs.message = c.message
+#         return hs
+#       end
+#     end
+#     if obj.status.state == "AtLatestKnown" then hs.status = "Healthy"; return hs end
+#     hs.status = "Progressing"
+#     return hs

@@ -1,0 +1,38 @@
+# gpt-OSS-20B from RHOAI Model Catalog - GPU fraction (H100 slice)
+# Allocate ~0.5 GPU per model so 3 models + 2 workbenches fit on 2x H100
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: gpt-oss-20b
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: huggingface
+      runtime: vllm-gpu-runtime
+      storage:
+        key: localMinIO
+        path: gpt-OSS-20B
+      # Reference RHOAI Model Catalog - adjust path/uri to catalog location
+      # storage:
+      #   uri: "s3://rhoai-models/gpt-OSS-20B"
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+        memory: "42Gi"
+        cpu: "8"
+      requests:
+        nvidia.com/gpu: "1"
+        memory: "38Gi"
+        cpu: "4"
+    nodeSelector:
+      nvidia.com/gpu.present: "true"
+    tolerations:
+      - key: "nvidia.com/gpu"
+        operator: Exists
+        effect: NoSchedule

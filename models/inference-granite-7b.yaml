@@ -1,0 +1,34 @@
+# granite-7b from RHOAI Model Catalog
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: granite-7b
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: huggingface
+      runtime: vllm-gpu-runtime
+      storage:
+        key: localMinIO
+        path: granite-7b
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+        memory: "24Gi"
+        cpu: "4"
+      requests:
+        nvidia.com/gpu: "1"
+        memory: "20Gi"
+        cpu: "2"
+    nodeSelector:
+      nvidia.com/gpu.present: "true"
+    tolerations:
+      - key: "nvidia.com/gpu"
+        operator: Exists
+        effect: NoSchedule

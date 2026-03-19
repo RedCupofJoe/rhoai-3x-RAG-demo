@@ -1,0 +1,231 @@
+# Triple-Chatbot RAG Demo — GitOps (RHOAI 3.0, ArgoCD, SNO)
+
+GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (SNO)** with **RHOAI 3.0**, **ArgoCD**, and **inline Milvus**.
+
+## Environment
+
+- **Platform:** OpenShift 4.19+, RHOAI 3.0
+- **Hardware:** 2× NVIDIA H100 GPUs, 1TB RAM
+- **Storage/DB:** Inline Milvus (RHOAI-integrated or standalone)
+- **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog)
+
+## Repository Layout
+
+```
+.
+├── argocd/                    # App-of-Apps and ArgoCD config
+│   ├── app-of-apps.yaml       # Child Applications (Wave 1–5)
+│   ├── kustomization.yaml
+│   └── resource-customizations.yaml  # Health checks for InferenceService/Subscription
+├── operators/                 # Wave 1 — Operators
+│   ├── kustomization.yaml
+│   ├── namespace-*.yaml
+│   ├── operator-group-*.yaml
+│   └── subscription-*.yaml    # RHOAI, NVIDIA GPU, OpenShift Pipelines (GitOps optional)
+├── infrastructure/            # Wave 2 — Milvus/DB
+│   ├── kustomization.yaml
+│   ├── namespace.yaml
+│   └── milvus/
+│       ├── pvc-milvus.yaml
+│       ├── deployment-milvus.yaml
+│       └── service-milvus.yaml
+├── models/                    # Wave 3 — Model serving (GPU slicing)
+│   ├── kustomization.yaml
+│   ├── serving-runtime-vllm.yaml
+│   ├── inference-gpt-oss-20b.yaml
+│   ├── inference-granite-7b.yaml
+│   └── inference-gemma-2-9b.yaml
+├── pipelines/                 # Wave 4 — Data pipeline (Docling → Milvus)
+│   ├── kustomization.yaml
+│   ├── pvc-rag-docs.yaml
+│   ├── task-docling-parse.yaml
+│   ├── task-chunk-upsert-milvus.yaml
+│   ├── pipeline-rag-docling-milvus.yaml
+│   ├── trigger-event-listener.yaml
+│   └── scripts/
+│       ├── docling_parse.py   # Docling: remove_headers, remove_footers, remove_toc
+│       └── chunk_upsert_milvus.py
+└── apps/                      # Wave 5 — Frontends (Open WebUI + OAuth proxy)
+    ├── kustomization.yaml
+    ├── open-webui-gpt-oss/
+    ├── open-webui-granite/
+    └── open-webui-gemma/
+```
+
+## Sync Waves (App-of-Apps)
+
+| Wave | Directory      | Content                                      |
+|------|----------------|----------------------------------------------|
+| 1    | `operators`   | Nvidia GPU, OpenShift Pipelines, RHOAI, (GitOps) |
+| 2    | `infrastructure` | Namespace, Milvus PVC/Deployment/Service   |
+| 3    | `models`      | ServingRuntime, InferenceServices (3 models)  |
+| 4    | `pipelines`   | Tekton Pipeline + Tasks, PVC, ConfigMaps      |
+| 5    | `apps`        | 3× Open WebUI + OAuth proxy                   |
+
+## Bootstrap ArgoCD
+
+1. Point ArgoCD at this repo and the `argocd` path:
+   - **Path:** `argocd`
+   - **Repo:** set `repoURL` to your fork (replace `your-org` in `app-of-apps.yaml`).
+
+2. Create the root Application (one-time):
+   ```bash
+   oc apply -f - <<EOF
+   apiVersion: argoproj.io/v1alpha1
+   kind: Application
+   metadata:
+     name: rag-demo-app-of-apps
+     namespace: openshift-gitops
+   spec:
+     project: default
+     source:
+       repoURL: https://github.com/your-org/rhoai-3x-RAG-demo.git
+       path: argocd
+       targetRevision: main
+     destination:
+       server: https://kubernetes.default.svc
+       namespace: openshift-gitops
+     syncPolicy:
+       automated:
+         prune: true
+         selfHeal: true
+   EOF
+   ```
+
+3. Optional: add [resource-customizations](argocd/resource-customizations.yaml) to `argocd-cm` for InferenceService and Subscription health.
+
+### Bootstrap automation (script)
+
+From the repo root, with `oc` logged into your cluster, you can run one script that performs steps 1–5:
+
+```bash
+# Default: uses git remote origin as repo URL, updates app-of-apps, creates bootstrap App, OAuth secrets
+./scripts/bootstrap-rag-demo.sh
+```
+
+**Environment variables (optional):**
+
+| Variable | Effect |
+|----------|--------|
+| `GIT_REPO_URL` | Git repo URL for ArgoCD (default: from `git remote get-url origin`) |
+| `SKIP_REPO_UPDATE` | Do not modify `argocd/app-of-apps.yaml` |
+| `SKIP_BOOTSTRAP_APP` | Do not create the bootstrap Application |
+| `SKIP_OAUTH_SECRETS` | Do not create OAuth session secrets |
+| `SKIP_MODEL_STORAGE` | Do not patch InferenceService storage |
+| `SKIP_CONSOLE_LINKS` | Do not add ConsoleLinks (frontends in console application menu) |
+| `CREATE_PIPELINE_RUN` | Create a PipelineRun that uses PVC `rag-docs` |
+| `MODEL_STORAGE_URI_GPT_OSS_20B` | Storage URI for gpt-oss-20b (e.g. `s3://bucket/gpt-OSS-20B`) |
+| `MODEL_STORAGE_URI_GRANITE_7B` | Storage URI for granite-7b |
+| `MODEL_STORAGE_URI_GEMMA_2_9B` | Storage URI for gemma-2-9b-it |
+
+**Examples:**
+
+```bash
+# Use a specific repo and set model storage (patch after sync)
+export GIT_REPO_URL="https://github.com/myorg/rhoai-3x-RAG-demo.git"
+export MODEL_STORAGE_URI_GPT_OSS_20B="s3://rhoai-models/gpt-OSS-20B"
+export MODEL_STORAGE_URI_GRANITE_7B="s3://rhoai-models/granite-7b"
+export MODEL_STORAGE_URI_GEMMA_2_9B="s3://rhoai-models/gemma-2-9b-it"
+./scripts/bootstrap-rag-demo.sh
+```
+
+```bash
+# Only create OAuth secrets (repo and bootstrap already done)
+SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_MODEL_STORAGE=1 CREATE_PIPELINE_RUN= ./scripts/bootstrap-rag-demo.sh
+```
+
+```bash
+# Full automation including one PipelineRun for rag-doc
+CREATE_PIPELINE_RUN=1 ./scripts/bootstrap-rag-demo.sh
+```
+
+Model storage patches are applied only if the `rag-demo` namespace and the InferenceServices already exist (e.g. after ArgoCD has synced). To patch later, set the `MODEL_STORAGE_URI_*` variables and run again with `SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1`.
+
+The script also creates **ConsoleLinks** so the three RAG frontends appear in the OpenShift web console application launcher (dropdown). Each link uses the cluster Route URL and **default OpenShift authentication** (OAuth); users click the link and sign in with OpenShift. Create ConsoleLinks after the apps and routes exist (e.g. run the script again after ArgoCD has synced Wave 5).
+
+## Operator Check (Wave 1)
+
+If **Nvidia GPU**, **OpenShift Pipelines**, **OpenShift GitOps**, or **OpenShift AI** operators are missing, the manifests in `operators/` provide:
+
+- **Namespace** + **OperatorGroup** + **Subscription** for:
+  - RHOAI (`redhat-ods-operator`)
+  - NVIDIA GPU Operator (`nvidia-gpu-operator`)
+  - OpenShift Pipelines (`openshift-operators`)
+
+Uncomment or add a GitOps Subscription in `operators/` if you manage OpenShift GitOps via GitOps.
+
+## Model Serving & GPU Slicing (Wave 3)
+
+- **ServingRuntime:** `vllm-gpu-runtime` (vLLM, GPU).
+- **InferenceServices:** `gpt-oss-20b`, `granite-7b`, `gemma-2-9b-it` with resource limits for 2× H100.
+- To run **3 models + 2 Jupyter Workbenches** without OOM, use **NVIDIA MIG** or **time-slicing** and set fractional `nvidia.com/gpu` (e.g. `"0.5"`) in the model and workbench specs. The current manifests use 1 GPU per model; adjust limits and replicas to match your SNO capacity.
+
+Model storage paths reference RHOAI Model Catalog; set `spec.predictor.model.storage` (or S3/URI) to your actual model locations.
+
+## Data Pipeline (Wave 4)
+
+- **Tekton Pipeline** `rag-docling-milvus`:
+  1. **Task 1 — Docling:** Reads from `rag-doc/` (PVC `rag-docs`), parses PDFs, applies **remove_headers**, **remove_footers**, **remove_toc** (see [scripts/docling_parse.py](pipelines/scripts/docling_parse.py)), writes markdown to a workspace.
+  2. **Task 2 — Chunk & upsert:** Chunks markdown and upserts vectors into the inline Milvus instance.
+
+- **Docling script:** [pipelines/scripts/docling_parse.py](pipelines/scripts/docling_parse.py) — Python logic for header/footer/TOC removal (post-process on exported markdown).
+- **rag-doc/** is in [.gitignore](.gitignore); do not commit raw PDFs.
+
+Run the pipeline manually or via Trigger/Cron (see `pipelines/trigger-event-listener.yaml`). PipelineRun example:
+
+```bash
+oc create -f pipelines/trigger-event-listener.yaml  # reference only
+# Or create a PipelineRun that references pipeline rag-docling-milvus and PVC rag-docs
+```
+
+## Frontends (Wave 5) — Open WebUI + OAuth
+
+Three deployments:
+
+- **open-webui-gpt-oss** — header "RAG Chat — gpt-OSS-20B", endpoint `gpt-oss-20b-predictor`
+- **open-webui-granite** — "RAG Chat — Granite 7B", endpoint `granite-7b-predictor`
+- **open-webui-gemma** — "RAG Chat — Gemma 2 9B", endpoint `gemma-2-9b-it-predictor`
+
+Each has:
+
+- **ENV:** `OPEN_WEBUI_HEADER_TITLE`, `OLLAMA_BASE_URL` (RHOAI InferenceService), `ENABLE_CONTEXT_UPLOAD=true` (context stuffing).
+- **OAuth proxy** (sidecar) using OpenShift authentication; TLS secret is created by OpenShift via `service.alpha.openshift.io/serving-cert-secret-name` on the Service.
+
+Before first use, create the session secret for each UI:
+
+```bash
+oc create secret generic open-webui-gpt-oss-oauth -n rag-demo --from-literal=session_secret=$(head -c 43 /dev/urandom | base64)
+oc create secret generic open-webui-granite-oauth -n rag-demo --from-literal=session_secret=$(head -c 43 /dev/urandom | base64)
+oc create secret generic open-webui-gemma-oauth -n rag-demo --from-literal=session_secret=$(head -c 43 /dev/urandom | base64)
+```
+
+(Or replace `CHANGE_ME_USE_OC_CREATE_SECRET` in the Git secrets and use a secrets manager.)
+
+## Kustomization
+
+Each directory has a `kustomization.yaml`:
+
+- **argocd:** `argocd/`
+- **operators:** `operators/`
+- **infrastructure:** `infrastructure/` (includes `milvus/`)
+- **models:** `models/`
+- **pipelines:** `pipelines/` (includes configMapGenerator for Docling and chunk-upsert scripts)
+- **apps:** `apps/` (includes `open-webui-gpt-oss`, `open-webui-granite`, `open-webui-gemma`)
+
+Build/test locally:
+
+```bash
+kubectl kustomize operators
+kubectl kustomize infrastructure
+kubectl kustomize models
+kubectl kustomize pipelines
+kubectl kustomize apps
+```
+
+## .gitignore
+
+`rag-doc/` and `*.pdf` are ignored so raw documents are not committed.
+
+---
+
+**Summary:** App-of-Apps in `argocd/` drives five child Applications (operators → infrastructure → models → pipelines → apps). Operators and health checks are conditional/documentary; model storage and GPU limits should be tuned for your 2× H100 SNO and RHOAI Model Catalog.

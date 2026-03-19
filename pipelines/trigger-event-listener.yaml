@@ -1,0 +1,50 @@
+# Optional: EventListener to trigger pipeline on git push or PVC change
+# Uncomment and configure when using Tekton Triggers
+# apiVersion: triggers.tekton.dev/v1beta1
+# kind: EventListener
+# metadata:
+#   name: rag-doc-listener
+#   namespace: rag-demo
+# spec:
+#   serviceAccountName: pipeline
+#   triggers:
+#     - name: rag-doc-updated
+#       interceptors:
+#         - ref:
+#             name: "gitlab"
+#       bindings:
+#         - ref: rag-doc-pipeline-binding
+#       template:
+#         ref: rag-doc-pipeline-trigger
+---
+# PipelineRun template for manual or cron-based runs (e.g. monitor rag-doc/)
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: rag-docling-milvus-run-template
+  namespace: rag-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    # Skip this template in sync; use as reference for manual/cron runs
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  pipelineRef:
+    name: rag-docling-milvus
+  params:
+    - name: milvus-host
+      value: milvus.rag-demo.svc
+    - name: collection-name
+      value: rag_docs
+  workspaces:
+    - name: rag-doc
+      persistentVolumeClaim:
+        claimName: rag-docs
+    - name: parsed-output
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+  timeout: 1h0m0s
