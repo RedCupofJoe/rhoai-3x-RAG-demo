@@ -11,7 +11,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/rhoai-3x-RAG-demo.git
+    repoURL: https://github.com/RedCupofJoe/rhoai-3x-RAG-demo.git
     path: operators
     targetRevision: main
     directory:
