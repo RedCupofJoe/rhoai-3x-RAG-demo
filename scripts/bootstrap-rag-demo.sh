@@ -242,11 +242,11 @@ create_bootstrap_app() {
   [[ -n "${SKIP_BOOTSTRAP_APP:-}" ]] && log "Skipping bootstrap Application (SKIP_BOOTSTRAP_APP is set)." && return 0
   local normalized="${repo_url}"
   [[ "$normalized" != *.git ]] && normalized="${normalized}.git"
-  if oc get application "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" &>/dev/null; then
+  if oc get applications.argoproj.io "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" &>/dev/null; then
     log "Bootstrap Application ${BOOTSTRAP_APP_NAME} already exists; updating repoURL."
     local escaped_url
     escaped_url=$(json_escape "${normalized}")
-    oc patch application "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" --type=merge -p "{\"spec\":{\"source\":{\"repoURL\":\"${escaped_url}\",\"path\":\"argocd\",\"targetRevision\":\"main\"}}}"
+    oc patch applications.argoproj.io "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" --type=merge -p "{\"spec\":{\"source\":{\"repoURL\":\"${escaped_url}\",\"path\":\"argocd\",\"targetRevision\":\"main\"}}}"
     return 0
   fi
   log "Creating bootstrap Application ${BOOTSTRAP_APP_NAME} in ${NAMESPACE_GITOPS}."
@@ -272,6 +272,11 @@ spec:
       prune: true
       selfHeal: true
 EOF
+  if ! oc get applications.argoproj.io "${BOOTSTRAP_APP_NAME}" -n "${NAMESPACE_GITOPS}" &>/dev/null; then
+    err "Application was applied but cannot be read back. Check: oc get applications.argoproj.io ${BOOTSTRAP_APP_NAME} -n ${NAMESPACE_GITOPS}"
+    return 1
+  fi
+  log "Bootstrap Application ${BOOTSTRAP_APP_NAME} verified in ${NAMESPACE_GITOPS}."
 }
 
 # --- 3. Create OAuth session secrets for the three UIs ---
