@@ -10,6 +10,7 @@
 #   GIT_REPO_URL          Git repo for ArgoCD (default: from git remote origin)
 #   SKIP_REPO_UPDATE      If set, do not modify argocd/app-of-apps.yaml
 #   SKIP_BOOTSTRAP_APP    If set, do not create the bootstrap Application
+#   SKIP_GITOPS_INSTALL   If set, do not check or install OpenShift GitOps operator
 #   SKIP_OAUTH_SECRETS    If set, do not create OAuth session secrets
 #   SKIP_MODEL_STORAGE    If set, do not patch InferenceService storage
 #   CREATE_PIPELINE_RUN   If set, create a PipelineRun using PVC rag-docs
@@ -54,6 +55,80 @@ check_oc() {
     die "Not logged into OpenShift. Run: oc login <cluster>"
   fi
   log "Using cluster: $(oc whoami --show-server)"
+}
+
+# --- Check for and install Red Hat OpenShift GitOps operator if missing ---
+ensure_gitops_operator() {
+  if [[ -n "${SKIP_GITOPS_INSTALL:-}" ]]; then
+    log "Skipping GitOps operator check/install (SKIP_GITOPS_INSTALL is set)."
+    return 0
+  fi
+
+  local sub_ns="openshift-operators"
+  local sub_name="openshift-gitops-operator"
+  local wait_timeout=600
+  local interval=15
+
+  if oc get subscription "${sub_name}" -n "${sub_ns}" &>/dev/null; then
+    log "OpenShift GitOps operator Subscription already present (${sub_ns}/${sub_name})."
+  else
+    log "OpenShift GitOps operator not found. Creating Subscription in ${sub_ns}."
+    if ! oc get namespace "${sub_ns}" &>/dev/null; then
+      log "Creating namespace ${sub_ns}."
+      oc create namespace "${sub_ns}"
+    fi
+    oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ${sub_name}
+  namespace: ${sub_ns}
+spec:
+  channel: latest
+  installPlanApproval: Automatic
+  name: openshift-gitops-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+    log "Subscription created. Waiting up to ${wait_timeout}s for OpenShift GitOps to be ready."
+  fi
+
+  # Wait for openshift-gitops namespace
+  local elapsed=0
+  while ! oc get namespace "${NAMESPACE_GITOPS}" &>/dev/null; do
+    if [[ $elapsed -ge $wait_timeout ]]; then
+      err "Timeout waiting for namespace ${NAMESPACE_GITOPS}. Install the OpenShift GitOps operator from OperatorHub and re-run."
+      return 1
+    fi
+    log "Waiting for namespace ${NAMESPACE_GITOPS}... (${elapsed}s)"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+
+  # Wait for Argo CD application controller (indicates instance is ready to accept Applications)
+  elapsed=0
+  while true; do
+    if oc get statefulset -n "${NAMESPACE_GITOPS}" -o name 2>/dev/null | grep -q application-controller; then
+      if oc get statefulset -n "${NAMESPACE_GITOPS}" -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null | grep -qE '^[1-9]'; then
+        log "OpenShift GitOps (Argo CD) is ready in ${NAMESPACE_GITOPS}."
+        return 0
+      fi
+    fi
+    # Fallback: check for server deployment or any argocd pod
+    if oc get deployment -n "${NAMESPACE_GITOPS}" -o name 2>/dev/null | grep -q gitops-server; then
+      if oc get deployment openshift-gitops-server -n "${NAMESPACE_GITOPS}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -qE '^[1-9]'; then
+        log "OpenShift GitOps (Argo CD) is ready in ${NAMESPACE_GITOPS}."
+        return 0
+      fi
+    fi
+    if [[ $elapsed -ge $wait_timeout ]]; then
+      err "Timeout waiting for Argo CD workload in ${NAMESPACE_GITOPS}. Check: oc get pods -n ${NAMESPACE_GITOPS}"
+      return 1
+    fi
+    log "Waiting for Argo CD instance in ${NAMESPACE_GITOPS}... (${elapsed}s)"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
 }
 
 # --- 1. Set repoURL in argocd/app-of-apps.yaml ---
@@ -308,6 +383,7 @@ main() {
     log "STORAGE_CLASS=${STORAGE_CLASS} set: for PVCs to use it, deploy with overlay infrastructure/milvus/overlays/ibm-block or a custom overlay (see README 'Optional: Storage class')."
   fi
   check_oc
+  ensure_gitops_operator
   local repo_url
   repo_url=$(get_repo_url)
   log "Using Git repo: ${repo_url}"
