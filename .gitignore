@@ -1,5 +1,6 @@
-# RAG document drop directory - do not commit raw PDFs
-rag-doc/
+# RAG document drop directory - do not commit raw PDFs (rag-doc/.gitkeep is tracked so the folder exists)
+rag-doc/*
+!rag-doc/.gitkeep
 *.pdf
 
 # GitOps / local overrides
