@@ -1,5 +1,6 @@
-# vLLM ServingRuntime for RHOAI Model Catalog models (GPU fraction via resource limits)
-# 2x H100 partitioned: 3 models + 2 workbenches; each model gets fractional GPU to avoid OOM
+# vLLM ServingRuntime for catalog / registry–backed models (RHOAI 3.3, RawDeployment).
+# Scheduling matches Hardware Profiles: node selectors + GPU tolerations (e.g. NVIDIA H100).
+# Align nodeSelector labels with your cluster (oc get nodes --show-labels) and dashboard Hardware Profiles.
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
@@ -33,7 +34,7 @@ spec:
           memory: "32Gi"
           cpu: "4"
   nodeSelector:
-    nvidia.com/gpu.present: "true"
+    nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
   tolerations:
     - key: "nvidia.com/gpu"
       operator: Exists

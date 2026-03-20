@@ -1,14 +1,14 @@
-# Triple-Chatbot RAG Demo — GitOps (RHOAI 3.0, ArgoCD, SNO)
+# Triple-Chatbot RAG Demo — GitOps (RHOAI 3.3, ArgoCD, SNO)
 
-GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (SNO)** with **RHOAI 3.0**, **ArgoCD**, and **standalone Milvus** vector DB.
+GitOps repository for a **triple-chatbot RAG demo** on **Single Node OpenShift (SNO)** with **RHOAI 3.3**, **ArgoCD**, and **standalone Milvus** vector DB.
 
 ## Environment
 
-- **Platform:** OpenShift 4.19 / 4.20+, RHOAI 3.0
+- **Platform:** OpenShift 4.19 / 4.20+, RHOAI 3.3
 - **Hardware:** 2× NVIDIA H100 GPUs, 1TB RAM
 - **Vector DB:** Standalone Milvus; **in-cluster MinIO** (S3-compatible) installed by Argo during the infrastructure sync wave.
 - **PersistentVolumes:** Storage-agnostic (cluster default). Optional overlays for a specific storage class (e.g. **OpenShift IBM Storage Operator** for fibre channel); see [Optional: Storage class](#optional-storage-class).
-- **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (RHOAI Model Catalog). This repo deploys them and wires each to an Open WebUI frontend and configures Milvus for RAG; see [OpenShift AI Model Catalog vs this repo](#openshift-ai-model-catalog-vs-this-repo).
+- **Models:** gpt-OSS-20B, granite-7b, gemma-2-9b-it (AI Hub Model Catalog / Model Registry). This repo deploys three **InferenceServices** and a **single Open WebUI** (model dropdown via OpenAI-compatible endpoints) plus Milvus for RAG; see [OpenShift AI Model Catalog vs this repo](#openshift-ai-model-catalog-vs-this-repo).
 
 ## Install from terminal
 
@@ -52,7 +52,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 
 4. **Run the bootstrap script**
 
-   The script updates the repo URL in the App-of-Apps manifest, creates the bootstrap ArgoCD Application, OAuth session secrets for the three UIs, and (optionally) ConsoleLinks and model storage patches.
+   The script updates the repo URL in the App-of-Apps manifest, creates the bootstrap ArgoCD Application, OAuth session secret for Open WebUI, and (optionally) ConsoleLinks.
 
    ```bash
    chmod +x scripts/bootstrap-rag-demo.sh
@@ -86,18 +86,7 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
    oc get applications.argoproj.io -n openshift-gitops
    ```
 
-7. **Optional: set model storage URIs and re-run**
-
-   After the `rag-demo` namespace and InferenceServices exist, you can patch storage (e.g. S3 or RHOAI Model Catalog URIs) and optionally add ConsoleLinks:
-
-   ```bash
-   export MODEL_STORAGE_URI_GPT_OSS_20B="s3://your-bucket/gpt-OSS-20B"
-   export MODEL_STORAGE_URI_GRANITE_7B="s3://your-bucket/granite-7b"
-   export MODEL_STORAGE_URI_GEMMA_2_9B="s3://your-bucket/gemma-2-9b-it"
-   SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1 ./scripts/bootstrap-rag-demo.sh
-   ```
-
-8. **Optional: run the RAG pipeline** (after pipelines and PVC are synced)
+7. **Optional: run the RAG pipeline** (after pipelines and PVC are synced)
 
    To ingest PDFs from the `rag-docs` PVC into Milvus (pipeline syncs PVC → S3, then downloads from S3 and runs Docling):
 
@@ -143,8 +132,6 @@ Follow these steps from a terminal to install the RAG demo on the OpenShift clus
 - **Application deployment stalling:** (1) **Repo URL must match where you push:** If you see only `rag-demo-app-of-apps` with Sync Status `Unknown`, the bootstrap app is likely pointing at the wrong repo (e.g. wrong org vs your fork). Fix: `oc patch applications.argoproj.io rag-demo-app-of-apps -n openshift-gitops --type=merge -p '{"spec":{"source":{"repoURL":"https://github.com/YOUR_ORG/rhoai-3x-RAG-demo.git","path":"argocd","targetRevision":"main","directory":{"recurse":true}}}}'` (replace `YOUR_ORG` with your GitHub org/user). Then push your repo and wait for Argo to sync. (2) Check apps: `oc get applications.argoproj.io -n openshift-gitops` — after a good sync you should see the bootstrap app plus child apps (rag-demo-operators, -infrastructure, -models, -pipelines, -apps). (3) In Argo CD UI, open each application to see sync errors or waiting resources (e.g. PVC Pending, ImagePullBackOff).
 - **Bootstrap Application not syncing:** Ensure `argocd/app-of-apps.yaml` is pushed and the repo URL in the bootstrap Application matches your push target.
 - **OAuth or ConsoleLinks:** Re-run the script without skip flags after the `rag-demo` namespace and routes exist.
-- **Model storage:** Set the `MODEL_STORAGE_URI_*` environment variables and re-run the script with the skip flags above so only storage is patched.
-
 ### Optional: Storage class
 
 The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a storage class by default, so the cluster default is used. During deployment you can optionally use a specific storage class (e.g. for fibre channel or other backends).
@@ -164,8 +151,10 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
 │   ├── app-of-apps.yaml       # Child Applications (Wave 1–5)
 │   ├── kustomization.yaml
 │   └── resource-customizations.yaml  # Health checks for InferenceService/Subscription
-├── operators/                 # Wave 1 — Operators
+├── operators/                 # Wave 1 — Operators + RHOAI cluster CRs (DSCI, DSC)
 │   ├── kustomization.yaml
+│   ├── dscinitialization-default.yaml
+│   ├── datasciencecluster-default.yaml
 │   ├── namespace-*.yaml
 │   ├── operator-group-*.yaml
 │   └── subscription-*.yaml    # RHOAI, NVIDIA GPU, OpenShift Pipelines (GitOps optional)
@@ -200,22 +189,20 @@ The repo is **storage-agnostic**: PVCs (etcd and Milvus data) do not set a stora
 │   └── scripts/
 │       ├── docling_parse.py   # Docling: remove_headers, remove_footers, remove_toc
 │       └── chunk_upsert_milvus.py
-└── apps/                      # Wave 5 — Frontends (Open WebUI + OAuth proxy)
+└── apps/                      # Wave 5 — Open WebUI + OAuth proxy (all models)
     ├── kustomization.yaml
-    ├── open-webui-gpt-oss/
-    ├── open-webui-granite/
-    └── open-webui-gemma/
+    └── open-webui/
 ```
 
 ## Sync Waves (App-of-Apps)
 
 | Wave | Directory      | Content                                      |
 |------|----------------|----------------------------------------------|
-| 1    | `operators`   | Nvidia GPU, OpenShift Pipelines, RHOAI, (GitOps) |
+| 1    | `operators`   | DSCI/DSC (RHOAI 3.3), Nvidia GPU, OpenShift Pipelines, RHOAI Subscription, (GitOps) |
 | 2    | `infrastructure` | Namespace, Milvus (standalone + S3), etcd; PVCs storage-agnostic (optional overlay) |
 | 3    | `models`      | ServingRuntime, InferenceServices (3 models)  |
 | 4    | `pipelines`   | Tekton Pipeline + Tasks, PVC, ConfigMaps      |
-| 5    | `apps`        | 3× Open WebUI + OAuth proxy                   |
+| 5    | `apps`        | Open WebUI + OAuth proxy (multi-model)        |
 
 ## Bootstrap ArgoCD
 
@@ -269,27 +256,20 @@ From the repo root, with `oc` logged into your cluster, you can run one script t
 | `SKIP_REPO_UPDATE` | Do not modify `argocd/app-of-apps.yaml` |
 | `SKIP_BOOTSTRAP_APP` | Do not create the bootstrap Application |
 | `SKIP_OAUTH_SECRETS` | Do not create OAuth session secrets |
-| `SKIP_MODEL_STORAGE` | Do not patch InferenceService storage |
 | `SKIP_CONSOLE_LINKS` | Do not add ConsoleLinks (frontends in console application menu) |
 | `CREATE_PIPELINE_RUN` | Create a PipelineRun that uses PVC `rag-docs` |
-| `MODEL_STORAGE_URI_GPT_OSS_20B` | Storage URI for gpt-oss-20b (e.g. `s3://bucket/gpt-OSS-20B`) |
-| `MODEL_STORAGE_URI_GRANITE_7B` | Storage URI for granite-7b |
-| `MODEL_STORAGE_URI_GEMMA_2_9B` | Storage URI for gemma-2-9b-it |
 
 **Examples:**
 
 ```bash
-# Use a specific repo and set model storage (patch after sync)
+# Use a specific repo URL
 export GIT_REPO_URL="https://github.com/YOUR_ORG/rhoai-3x-RAG-demo.git"
-export MODEL_STORAGE_URI_GPT_OSS_20B="s3://rhoai-models/gpt-OSS-20B"
-export MODEL_STORAGE_URI_GRANITE_7B="s3://rhoai-models/granite-7b"
-export MODEL_STORAGE_URI_GEMMA_2_9B="s3://rhoai-models/gemma-2-9b-it"
 ./scripts/bootstrap-rag-demo.sh
 ```
 
 ```bash
-# Only create OAuth secrets (repo and bootstrap already done)
-SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_MODEL_STORAGE=1 CREATE_PIPELINE_RUN= ./scripts/bootstrap-rag-demo.sh
+# Only create OAuth secret and optional PipelineRun (repo and bootstrap already done)
+SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 CREATE_PIPELINE_RUN= ./scripts/bootstrap-rag-demo.sh
 ```
 
 ```bash
@@ -297,9 +277,7 @@ SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_MODEL_STORAGE=1 CREATE_PIPELINE_RUN
 CREATE_PIPELINE_RUN=1 ./scripts/bootstrap-rag-demo.sh
 ```
 
-Model storage patches are applied only if the `rag-demo` namespace and the InferenceServices already exist (e.g. after ArgoCD has synced). To patch later, set the `MODEL_STORAGE_URI_*` variables and run again with `SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1`.
-
-The script also creates **ConsoleLinks** so the three RAG frontends appear in the OpenShift web console application launcher (dropdown). Each link uses the cluster Route URL and **default OpenShift authentication** (OAuth); users click the link and sign in with OpenShift. Create ConsoleLinks after the apps and routes exist (e.g. run the script again after ArgoCD has synced Wave 5).
+The script also creates a **ConsoleLink** so the RAG Open WebUI route appears in the OpenShift web console application launcher. It uses the cluster Route URL and **default OpenShift authentication** (OAuth). Run the script again after Wave 5 if the route did not exist on the first run.
 
 ## Operator Check (Wave 1)
 
@@ -316,21 +294,21 @@ Uncomment or add a GitOps Subscription in `operators/` if you manage OpenShift G
 
 **What OpenShift AI automates:** The [OpenShift AI Model Catalog](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/2.25/html-single/working_with_the_model_catalog/) lets you **deploy a model** from the validated catalog (UI or API). That creates an **InferenceService** in a project you choose. The catalog does **not** create frontends, wire them to models, or configure a vector DB.
 
-**What this repo automates (GitOps):** This repo deploys the **full RAG stack** in one flow: models (InferenceServices that use the same catalog-backed storage), **three Open WebUI frontends** each wired to one model, **Milvus** (and MinIO) for the vector store, and a **Tekton pipeline** to ingest documents into Milvus. So you get catalog-backed models **and** the connections to frontends and Milvus from a single sync.
+**What this repo automates (GitOps):** This repo deploys the **full RAG stack** in one flow: three **InferenceServices** with `spec.predictor.model.storage.uri` aimed at catalog/registry-friendly schemes (`hf://…` or replace with `oci://registry.redhat.io/…` ModelCars from AI Hub), **one Open WebUI** wired to all three predictors via `OPENAI_API_BASE_URLS`, **Milvus** (and MinIO) for the vector store, and a **Tekton pipeline** to ingest documents into Milvus.
 
-**Using catalog models here:** The InferenceServices in `models/` reference RHOAI Model Catalog storage (or S3). After sync, the bootstrap script can patch `spec.predictor.model.storage` with your catalog or S3 URIs (`MODEL_STORAGE_URI_*`). So models are still “from the catalog”; this repo adds the rest of the automation (frontends, Milvus, pipeline).
+**Using catalog models here:** Edit each InferenceService `storage.uri` to the exact **HF** or **OCI** URI from **AI Hub → Catalog** or your **Model Registry** so pulls use normal cluster registry auth (global pull secret) instead of ad hoc S3 staging.
 
-**Alternative:** Red Hat’s [RAG AI quickstart](https://docs.redhat.com/en/learn/ai-quickstarts/rh-RAG) uses a different stack (Llama Stack, PGVector, Kubeflow Pipelines, Helm). Use it if you prefer that blueprint; this repo is a GitOps alternative with three separate chat frontends and Milvus.
+**Alternative:** Red Hat’s [RAG AI quickstart](https://docs.redhat.com/en/learn/ai-quickstarts/rh-RAG) uses a different stack (Llama Stack, PGVector, Kubeflow Pipelines, Helm). Use it if you prefer that blueprint; this repo is a GitOps alternative with a unified chat UI and Milvus.
 
-**Using OpenShift 4.20 to configure frontends and Milvus:** OpenShift 4.20 doesn’t provide a separate UI or controller that wires frontends to models or installs Milvus. On 4.19/4.20, you use this repo: deploy via ArgoCD (and the bootstrap script). ArgoCD syncs the manifests that define the three Open WebUI deployments (each with `OLLAMA_BASE_URL` pointing at its InferenceService), Milvus, MinIO, and the Tekton ingestion pipeline. So “configure frontends and setup Milvus” on 4.20 = run the bootstrap script and let ArgoCD sync this repo.
+**Using OpenShift 4.20 to configure frontends and Milvus:** Deploy via ArgoCD (and the bootstrap script). ArgoCD syncs Open WebUI (OpenAI-compatible endpoints to each InferenceService), Milvus, MinIO, and the Tekton ingestion pipeline. The RHOAI dashboard is reachable at **`data-science-gateway.apps.<cluster>`** (not the legacy `rhods-dashboard-redhat-ods-applications` hostname).
 
 ### Who deploys what (full automation)
 
 | Step | Who | What |
 |------|-----|------|
 | 1 | **You** (cluster admin) | Log in (`oc login`), run the bootstrap script (and push, or `GIT_PUSH=1`). The script can install OpenShift GitOps if missing. |
-| 2 | **GitOps (ArgoCD)** | Syncs this repo and deploys **everything**: infrastructure (Milvus, MinIO, etc.), **model definitions (InferenceService CRs)**, pipelines, and the three frontends. So GitOps configures the frontends, sets up Milvus, and creates the InferenceService resources. |
-| 3 | **OpenShift AI (RHOAI)** | Supplies the Model Catalog (model artifacts) and the serving stack that **reconciles** InferenceService CRs and runs the actual model pods. Those pods pull from the catalog (or S3). So the models that connect to Milvus at inference time are run by OpenShift AI; the CRs that tell it what to deploy come from GitOps. |
+| 2 | **GitOps (ArgoCD)** | Syncs this repo and deploys **everything**: infrastructure (Milvus, MinIO, etc.), **InferenceService CRs**, pipelines, and **Open WebUI**. |
+| 3 | **OpenShift AI (RHOAI)** | Supplies the Model Catalog / registry and the serving stack that **reconciles** InferenceService CRs and runs model pods (weights from `storage.uri`). |
 
 So the **whole deployment is automated** as long as you are logged into the OpenShift cluster with a cluster-admin account, run the bootstrap script, and push the updated manifest (or use `GIT_PUSH=1`). You do not need to deploy models separately from the OpenShift AI catalog UI; GitOps deploys the InferenceService CRs from this repo, and OpenShift AI runs them.
 
@@ -338,11 +316,12 @@ So the **whole deployment is automated** as long as you are logged into the Open
 
 ## Model Serving & GPU Slicing (Wave 3)
 
-- **ServingRuntime:** `vllm-gpu-runtime` (vLLM, GPU).
+- **ServingRuntime:** `vllm-gpu-runtime` (vLLM, GPU, RawDeployment).
 - **InferenceServices:** `gpt-oss-20b`, `granite-7b`, `gemma-2-9b-it` with resource limits for 2× H100.
+- **Hardware profiles (RHOAI 3.3):** Accelerator profiles and container-size selectors are deprecated. These manifests use **`nodeSelector`** / **tolerations** aligned with **NVIDIA H100** (`nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3`). Adjust to match your nodes (`oc get nodes --show-labels`) and any **HardwareProfile** you define in the dashboard.
 - To run **3 models + 2 Jupyter Workbenches** without OOM, use **NVIDIA MIG** or **time-slicing** and set fractional `nvidia.com/gpu` (e.g. `"0.5"`) in the model and workbench specs. The current manifests use 1 GPU per model; adjust limits and replicas to match your SNO capacity.
 
-Model storage paths reference RHOAI Model Catalog; set `spec.predictor.model.storage` (or S3/URI) to your actual model locations.
+**Weights:** `spec.predictor.model.storage.uri` uses `hf://…` by default (RHOAI 3.3 KServe CSI + HF flow). Swap each URI for the **OCI ModelCar** reference from AI Hub / Model Registry when you want registry-only pulls via the cluster pull secret.
 
 ## Data Pipeline (Wave 4)
 
@@ -398,26 +377,18 @@ Run the pipeline manually or via Trigger/Cron (see `pipelines/trigger-event-list
 
 ## Frontends (Wave 5) — Open WebUI + OAuth
 
-Three deployments:
+Single deployment **`open-webui`**:
 
-- **open-webui-gpt-oss** — header "RAG Chat — gpt-OSS-20B", endpoint `gpt-oss-20b-predictor`
-- **open-webui-granite** — "RAG Chat — Granite 7B", endpoint `granite-7b-predictor`
-- **open-webui-gemma** — "RAG Chat — Gemma 2 9B", endpoint `gemma-2-9b-it-predictor`
-
-Each has:
-
-- **ENV:** `OPEN_WEBUI_HEADER_TITLE`, `OLLAMA_BASE_URL` (RHOAI InferenceService), `ENABLE_CONTEXT_UPLOAD=true` (context stuffing).
+- **ENV:** `ENABLE_OPENAI_API=true`, **`OPENAI_API_BASE_URLS`** (semicolon-separated KServe OpenAI endpoints for `gpt-oss-20b-predictor`, `granite-7b-predictor`, `gemma-2-9b-it-predictor`), **`OPENAI_API_KEYS`** (placeholders; KServe does not require keys), `OPEN_WEBUI_HEADER_TITLE`, `ENABLE_CONTEXT_UPLOAD=true`.
 - **OAuth proxy** (sidecar) using OpenShift authentication; TLS secret is created by OpenShift via `service.alpha.openshift.io/serving-cert-secret-name` on the Service.
 
-Before first use, create the session secret for each UI:
+Before first use, create the session secret (or let the bootstrap script create it):
 
 ```bash
-oc create secret generic open-webui-gpt-oss-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
-oc create secret generic open-webui-granite-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
-oc create secret generic open-webui-gemma-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
+oc create secret generic open-webui-oauth -n rag-demo --from-literal=session_secret=$(openssl rand -base64 32)
 ```
 
-(Or replace `CHANGE_ME_USE_OC_CREATE_SECRET` in the Git secrets and use a secrets manager.)
+(Or replace `CHANGE_ME_USE_OC_CREATE_SECRET` in the Git manifest and use a secrets manager.)
 
 ## Kustomization
 
@@ -428,7 +399,7 @@ Each directory has a `kustomization.yaml`:
 - **infrastructure:** `infrastructure/` (includes `milvus/`)
 - **models:** `models/`
 - **pipelines:** `pipelines/` (includes configMapGenerator for Docling and chunk-upsert scripts)
-- **apps:** `apps/` (includes `open-webui-gpt-oss`, `open-webui-granite`, `open-webui-gemma`)
+- **apps:** `apps/` (includes `open-webui/`)
 
 Build/test locally:
 
@@ -448,4 +419,4 @@ Contents of `rag-doc/` are ignored (except `rag-doc/.gitkeep`) and `*.pdf` are i
 
 **Vector DB and storage:** Argo installs **in-cluster MinIO** and configures Milvus to use it (bucket `milvus-rag`). Default credentials are in Secret `milvus-s3-credentials`; for production or external S3, see [infrastructure/milvus/README.md](infrastructure/milvus/README.md). **PersistentVolumes** are storage-agnostic (cluster default); optionally use [infrastructure/milvus/overlays/ibm-block](infrastructure/milvus/overlays/ibm-block) for IBM Storage Operator / fibre channel.
 
-**Summary:** App-of-Apps in `argocd/` drives five child Applications (operators → infrastructure → models → pipelines → apps). Operators and health checks are conditional/documentary; model storage and GPU limits should be tuned for your 2× H100 SNO and RHOAI Model Catalog.
+**Summary:** App-of-Apps in `argocd/` drives five child Applications (operators → infrastructure → models → pipelines → apps). Tune `storage.uri`, GPU fractions, and **nodeSelector** labels for your cluster and catalog entries.

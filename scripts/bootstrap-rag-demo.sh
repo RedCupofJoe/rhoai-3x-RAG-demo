@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Bootstrap RAG demo on the OpenShift cluster you are logged into (oc login).
-# Automates: repoURL, bootstrap Application, OAuth secrets, InferenceService storage, optional PipelineRun.
+# Automates: repoURL, bootstrap Application, OAuth secrets, optional PipelineRun.
 #
 # Usage:
 #   ./scripts/bootstrap-rag-demo.sh [OPTIONS]
@@ -12,13 +12,9 @@
 #   SKIP_BOOTSTRAP_APP    If set, do not create the bootstrap Application
 #   SKIP_GITOPS_INSTALL   If set, do not check or install OpenShift GitOps operator
 #   SKIP_OAUTH_SECRETS    If set, do not create OAuth session secrets
-#   SKIP_MODEL_STORAGE    If set, do not patch InferenceService storage
 #   GIT_PUSH             If set, commit and push argocd/app-of-apps.yaml when repoURL was updated (requires git, push may prompt for auth)
 #   CREATE_PIPELINE_RUN   If set, create a PipelineRun using PVC rag-docs
 #   SKIP_CONSOLE_LINKS   If set, do not add ConsoleLinks (frontends in console dropdown)
-#   MODEL_STORAGE_URI_GPT_OSS_20B    e.g. s3://bucket/gpt-OSS-20B
-#   MODEL_STORAGE_URI_GRANITE_7B     e.g. s3://bucket/granite-7b
-#   MODEL_STORAGE_URI_GEMMA_2_9B    e.g. s3://bucket/gemma-2-9b-it
 #   STORAGE_CLASS                   Optional: name of StorageClass for PVCs (e.g. ibm-block);
 #                                   if set, use infrastructure/milvus/overlays/ibm-block or see README.
 #
@@ -280,7 +276,7 @@ EOF
   log "Bootstrap Application ${BOOTSTRAP_APP_NAME} verified in ${NAMESPACE_GITOPS}."
 }
 
-# --- 3. Create OAuth session secrets for the three UIs ---
+# --- 3. Create OAuth session secret for consolidated Open WebUI ---
 create_oauth_secrets() {
   [[ -n "${SKIP_OAUTH_SECRETS:-}" ]] && log "Skipping OAuth secrets (SKIP_OAUTH_SECRETS is set)." && return 0
   if ! oc get namespace "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
@@ -288,7 +284,7 @@ create_oauth_secrets() {
     oc create namespace "${NAMESPACE_RAG_DEMO}" || true
   fi
   local secret_name session_secret
-  for name in open-webui-gpt-oss open-webui-granite open-webui-gemma; do
+  for name in open-webui; do
     secret_name="${name}-oauth"
     if oc get secret "${secret_name}" -n "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
       log "Secret ${secret_name} already exists in ${NAMESPACE_RAG_DEMO}; skipping."
@@ -300,57 +296,7 @@ create_oauth_secrets() {
   done
 }
 
-# --- 4. Point InferenceService storage at RHOAI Model Catalog or S3 ---
-patch_model_storage() {
-  [[ -n "${SKIP_MODEL_STORAGE:-}" ]] && log "Skipping InferenceService storage patches (SKIP_MODEL_STORAGE is set)." && return 0
-  if ! oc get namespace "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
-    log "Namespace ${NAMESPACE_RAG_DEMO} not found; skip patching InferenceServices (run again after sync)."
-    return 0
-  fi
-  local uri name
-  # gpt-oss-20b
-  uri="${MODEL_STORAGE_URI_GPT_OSS_20B:-}"
-  if [[ -n "${uri}" ]]; then
-    name="gpt-oss-20b"
-    if oc get inferenceservice "${name}" -n "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
-      local escaped_uri
-      escaped_uri=$(json_escape "${uri}")
-      oc patch inferenceservice "${name}" -n "${NAMESPACE_RAG_DEMO}" --type=merge -p "{\"spec\":{\"predictor\":{\"model\":{\"storage\":{\"uri\":\"${escaped_uri}\"}}}}}"
-      log "Patched InferenceService ${name} storage to ${uri}"
-    else
-      log "InferenceService ${name} not found; skipping storage patch."
-    fi
-  fi
-  # granite-7b
-  uri="${MODEL_STORAGE_URI_GRANITE_7B:-}"
-  if [[ -n "${uri}" ]]; then
-    name="granite-7b"
-    if oc get inferenceservice "${name}" -n "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
-      escaped_uri=$(json_escape "${uri}")
-      oc patch inferenceservice "${name}" -n "${NAMESPACE_RAG_DEMO}" --type=merge -p "{\"spec\":{\"predictor\":{\"model\":{\"storage\":{\"uri\":\"${escaped_uri}\"}}}}}"
-      log "Patched InferenceService ${name} storage to ${uri}"
-    else
-      log "InferenceService ${name} not found; skipping storage patch."
-    fi
-  fi
-  # gemma-2-9b-it
-  uri="${MODEL_STORAGE_URI_GEMMA_2_9B:-}"
-  if [[ -n "${uri}" ]]; then
-    name="gemma-2-9b-it"
-    if oc get inferenceservice "${name}" -n "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
-      escaped_uri=$(json_escape "${uri}")
-      oc patch inferenceservice "${name}" -n "${NAMESPACE_RAG_DEMO}" --type=merge -p "{\"spec\":{\"predictor\":{\"model\":{\"storage\":{\"uri\":\"${escaped_uri}\"}}}}}"
-      log "Patched InferenceService ${name} storage to ${uri}"
-    else
-      log "InferenceService ${name} not found; skipping storage patch."
-    fi
-  fi
-  if [[ -z "${MODEL_STORAGE_URI_GPT_OSS_20B:-}${MODEL_STORAGE_URI_GRANITE_7B:-}${MODEL_STORAGE_URI_GEMMA_2_9B:-}" ]]; then
-    log "No MODEL_STORAGE_URI_* env vars set; InferenceService storage left as in Git."
-  fi
-}
-
-# --- 5. Optionally create a PipelineRun using PVC rag-docs ---
+# --- 4. Optionally create a PipelineRun using PVC rag-docs ---
 create_pipeline_run() {
   [[ -z "${CREATE_PIPELINE_RUN:-}" ]] && log "Skipping PipelineRun (CREATE_PIPELINE_RUN not set)." && return 0
   if ! oc get namespace "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
@@ -390,7 +336,7 @@ EOF
   log "PipelineRun ${run_name} created. Watch with: oc get pipelinerun -n ${NAMESPACE_RAG_DEMO}"
 }
 
-# --- 6. Add frontends to OpenShift console application launcher (ConsoleLinks, default OpenShift auth) ---
+# --- 5. Add frontend to OpenShift console application launcher (ConsoleLinks, default OpenShift auth) ---
 create_console_links() {
   [[ -n "${SKIP_CONSOLE_LINKS:-}" ]] && log "Skipping ConsoleLinks (SKIP_CONSOLE_LINKS is set)." && return 0
   if ! oc get namespace "${NAMESPACE_RAG_DEMO}" &>/dev/null; then
@@ -399,7 +345,7 @@ create_console_links() {
   fi
   local route_name route_host url text
   # Format: route_name:Display Label
-  local -a routes=("open-webui-gpt-oss:gpt-OSS-20B" "open-webui-granite:Granite 7B" "open-webui-gemma:Gemma 2 9B")
+  local -a routes=("open-webui:RAG Chat")
   for entry in "${routes[@]}"; do
     route_name="${entry%%:*}"
     text="${entry#*:}"
@@ -414,7 +360,7 @@ create_console_links() {
     if oc get consolelink "${link_name}" &>/dev/null; then
       local escaped_url escaped_text
       escaped_url=$(json_escape "${url}")
-      escaped_text=$(json_escape "RAG Chat (${text})")
+      escaped_text=$(json_escape "${text}")
       oc patch consolelink "${link_name}" --type=merge -p "{\"spec\":{\"href\":\"${escaped_url}\",\"text\":\"${escaped_text}\"}}"
       log "Updated ConsoleLink ${link_name} -> ${url}"
     else
@@ -426,7 +372,7 @@ metadata:
 spec:
   href: ${url}
   location: ApplicationMenu
-  text: "RAG Chat (${text})"
+  text: "${text}"
   applicationMenu:
     section: RAG Demo
 EOF
@@ -473,7 +419,6 @@ main() {
   maybe_push_repo
   create_bootstrap_app "${repo_url}"
   create_oauth_secrets
-  patch_model_storage
   create_pipeline_run
   create_console_links
 
@@ -484,9 +429,6 @@ main() {
   elif [[ -z "${SKIP_REPO_UPDATE:-}" ]]; then
     log "If repoURL was updated, push your repo so ArgoCD can sync: git add argocd/app-of-apps.yaml && git commit -m 'Set repoURL for ArgoCD' && git push"
     log "Or re-run with GIT_PUSH=1 to automate the push."
-  fi
-  if [[ -z "${MODEL_STORAGE_URI_GPT_OSS_20B:-}${MODEL_STORAGE_URI_GRANITE_7B:-}${MODEL_STORAGE_URI_GEMMA_2_9B:-}" ]]; then
-    log "To patch model storage later: set MODEL_STORAGE_URI_GPT_OSS_20B, MODEL_STORAGE_URI_GRANITE_7B, MODEL_STORAGE_URI_GEMMA_2_9B and re-run with SKIP_REPO_UPDATE=1 SKIP_BOOTSTRAP_APP=1 SKIP_OAUTH_SECRETS=1"
   fi
 }
 
