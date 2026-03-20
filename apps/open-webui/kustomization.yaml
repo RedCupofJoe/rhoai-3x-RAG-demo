@@ -9,4 +9,4 @@ resources:
   - oauth-secret.yaml
 commonLabels:
   app.kubernetes.io/component: frontend
-  rag-demo/model: gpt-oss-20b
+  rag-demo/component: open-webui

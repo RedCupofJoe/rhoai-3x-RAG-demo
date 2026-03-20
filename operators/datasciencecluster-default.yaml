@@ -1,0 +1,30 @@
+# RHOAI 3.3 — cluster-scoped DataScienceCluster (GitOps-friendly baseline).
+# Component renames: use aipipelines (not datasciencepipelines). Do not enable modelmeshserving;
+# single-model serving is via kserve only.
+# If your cluster already has default-dsc, this manifest reconciles the operator-managed CR.
+# Verify apiVersion with: oc explain datasciencecluster.spec
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  components:
+    dashboard:
+      managementState: Managed
+    workbenches:
+      managementState: Managed
+    modelregistry:
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries
+    kserve:
+      managementState: Managed
+      defaultDeploymentMode: RawDeployment
+      modelsAsService:
+        managementState: Removed
+      rawDeploymentServiceConfig: Headless
+    aipipelines:
+      managementState: Managed
+      argoWorkflowsControllers:
+        managementState: Managed

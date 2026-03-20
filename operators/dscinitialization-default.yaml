@@ -1,0 +1,13 @@
+# RHOAI 3.3 — DSCInitialization (cluster-scoped). Applications land in redhat-ods-applications;
+# internal resources follow the data-science-* naming convention from the operator.
+# If default-dsci already exists, apply merges this spec.
+apiVersion: dscinitialization.opendatahub.io/v1
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Managed

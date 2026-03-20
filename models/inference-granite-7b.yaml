@@ -1,4 +1,4 @@
-# granite-7b from RHOAI Model Catalog
+# granite-7b — catalog/registry-native storage (HF or OCI); swap uri for your Model Registry or catalog ModelCar.
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
@@ -13,8 +13,7 @@ spec:
         name: huggingface
       runtime: vllm-gpu-runtime
       storage:
-        key: localMinIO
-        path: granite-7b
+        uri: hf://ibm-granite/granite-7b-instruct
     minReplicas: 1
     maxReplicas: 1
     resources:
@@ -27,7 +26,7 @@ spec:
         memory: "20Gi"
         cpu: "2"
     nodeSelector:
-      nvidia.com/gpu.present: "true"
+      nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
     tolerations:
       - key: "nvidia.com/gpu"
         operator: Exists

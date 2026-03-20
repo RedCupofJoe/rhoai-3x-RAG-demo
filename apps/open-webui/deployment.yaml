@@ -1,8 +1,8 @@
-# Open WebUI for gpt-OSS-20B - with OAuth proxy sidecar for OpenShift auth
+# Single Open WebUI — OpenShift OAuth proxy + multiple OpenAI-compatible backends (RHOAI InferenceServices).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: open-webui-gpt-oss
+  name: open-webui
   namespace: rag-demo
   annotations:
     argocd.argoproj.io/sync-wave: "5"
@@ -10,15 +10,14 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: open-webui-gpt-oss
+      app: open-webui
   template:
     metadata:
       labels:
-        app: open-webui-gpt-oss
+        app: open-webui
         app.kubernetes.io/component: frontend
-        rag-demo/model: gpt-oss-20b
     spec:
-      serviceAccountName: open-webui-gpt-oss
+      serviceAccountName: open-webui
       containers:
         - name: open-webui
           image: ghcr.io/open-webui/open-webui:main
@@ -26,14 +25,19 @@ spec:
             - containerPort: 8080
               name: http
           env:
-            - name: OLLAMA_BASE_URL
-              value: "http://gpt-oss-20b-predictor.rag-demo.svc.cluster.local/v1"
+            - name: ENABLE_OPENAI_API
+              value: "true"
+            # Semicolon-separated list; pairs with OPENAI_API_KEYS (KServe has no key — placeholders are fine).
+            - name: OPENAI_API_BASE_URLS
+              value: "http://gpt-oss-20b-predictor.rag-demo.svc.cluster.local/v1;http://granite-7b-predictor.rag-demo.svc.cluster.local/v1;http://gemma-2-9b-it-predictor.rag-demo.svc.cluster.local/v1"
+            - name: OPENAI_API_KEYS
+              value: "not-used;not-used;not-used"
             - name: OPEN_WEBUI_HEADER_TITLE
-              value: "RAG Chat — gpt-OSS-20B"
+              value: "RAG Chat — OpenShift AI"
             - name: ENABLE_CONTEXT_UPLOAD
               value: "true"
             - name: WEBUI_NAME
-              value: "gpt-OSS-20B"
+              value: "RAG Demo"
           resources:
             requests:
               memory: "512Mi"
@@ -49,7 +53,7 @@ spec:
             - -http-address=
             - -upstream=http://localhost:8080
             - -client-id=system:api-server
-            - -openshift-service-account=open-webui-gpt-oss
+            - -openshift-service-account=open-webui
             - -cookie-secret-file=/etc/oauth-proxy/secrets/session_secret
             - -tls-cert=/etc/tls/private/tls.crt
             - -tls-key=/etc/tls/private/tls.key
@@ -73,7 +77,7 @@ spec:
       volumes:
         - name: oauth-proxy-secrets
           secret:
-            secretName: open-webui-gpt-oss-oauth
+            secretName: open-webui-oauth
         - name: tls
           secret:
-            secretName: open-webui-gpt-oss-tls
+            secretName: open-webui-tls

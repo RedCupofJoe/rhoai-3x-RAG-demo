@@ -1,5 +1,6 @@
-# gpt-OSS-20B from RHOAI Model Catalog - GPU fraction (H100 slice)
-# Allocate ~0.5 GPU per model so 3 models + 2 workbenches fit on 2x H100
+# gpt-OSS-20B — model weights via KServe storage URI (HF / OCI ModelCar from AI Hub catalog or registry).
+# RHOAI 3.3: prefer catalog/registry OCI references (registry.redhat.io) so pulls use the cluster pull secret.
+# Replace spec.predictor.model.storage.uri with the exact URI from AI Hub → Catalog → Deploy (or Model Registry).
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
@@ -14,11 +15,7 @@ spec:
         name: huggingface
       runtime: vllm-gpu-runtime
       storage:
-        key: localMinIO
-        path: gpt-OSS-20B
-      # Reference RHOAI Model Catalog - adjust path/uri to catalog location
-      # storage:
-      #   uri: "s3://rhoai-models/gpt-OSS-20B"
+        uri: hf://openai/gpt-oss-20b
     minReplicas: 1
     maxReplicas: 1
     resources:
@@ -31,7 +28,7 @@ spec:
         memory: "38Gi"
         cpu: "4"
     nodeSelector:
-      nvidia.com/gpu.present: "true"
+      nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
     tolerations:
       - key: "nvidia.com/gpu"
         operator: Exists
